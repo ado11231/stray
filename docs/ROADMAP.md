@@ -19,7 +19,7 @@
 
 | Phase | Goal | Status |
 | --- | --- | --- |
-| 0 | An image test: a cat running along the bottom rows | Written, not yet run in a real terminal |
+| 0 | An image test: a cat running along the bottom rows | Complete |
 | 1 | A wrapper you cannot notice, the clock, and `stray stats` | Next |
 | 2 | The image check, and the bar with a cat that sits still | Planned |
 | 3 | The launch greeting | Planned |
@@ -44,10 +44,6 @@ flowchart LR
 
 ## Complete
 
-* Nothing yet.
-
-## Next
-
 ### Phase 0: The Image Test
 
 * **Built:** `stray-image-test` in `src/bin/stray-image-test.rs`, a small program with no outside libraries.
@@ -59,17 +55,13 @@ flowchart LR
 5. `--dark` draws a dark cat for light backgrounds.
 6. q or Ctrl C stops it early and cleans up.
 
-* **Remaining:**
-
-1. Run it in kitty.
-2. Run it in VS Code with `terminal.integrated.enableImages` on.
-3. Run it in VS Code with that setting off.
-4. Run it in tmux with `allow-passthrough` on, to see how the image check behaves there.
-
 * **How to run:** `cargo run --release --bin stray-image-test`, then again with `-- --resend` and `-- --dark`.
 
 * **Done when:** the cat runs there and back in both terminals with no flicker, no gaps, and nothing left behind.
-* If VS Code fails in both modes, kitty becomes the only tested terminal.
+* **Result:** done in `--resend` mode. Placing by ID works in kitty but not in VS Code. See the [Test Record](#test-record).
+* The tmux test moves to Phase 2, on Linux, because tmux is not on the Mac.
+
+## Next
 
 ### Phase 1: The Wrapper And The Clock
 
@@ -99,7 +91,7 @@ flowchart LR
 
 1. Run the image check. If it fails, run the shell directly and print the hint once.
 2. Reserve the bottom two rows.
-3. Upload the frames, colored to match the terminal's text.
+3. Color the frames to match the terminal's text.
 4. Place a cat that sits still in the home corner.
 5. Keep the bar and the cat whole through clears, full screen programs, resets, and resizes.
 6. Stop programs from moving the cursor into the bar.
@@ -174,7 +166,7 @@ flowchart LR
 
 * Details are in [Hard Parts](ARCHITECTURE.md#hard-parts).
 
-1. VS Code's image support is new. Placing frames by ID may flicker or fail.
+1. VS Code's image support is new. Placing frames by ID fails there, so Stray sends each frame again.
 2. The final frames are not drawn, and nobody is chosen to draw them.
 3. kitty and VS Code may handle the scroll region differently.
 4. Coding agents redraw the screen often.
@@ -194,6 +186,23 @@ flowchart LR
 6. Is two rows tall enough for the cat?
 
 ## Test Record
+
+### Phase 0: October 2, 2026, kitty And VS Code
+
+* Run on macOS by the user.
+
+| Terminal | Mode | Frames placed | Result |
+| --- | --- | --- | --- |
+| kitty | by ID | 215 | The cat ran there and back. |
+| kitty | `--resend` | 215 | The cat ran there and back. |
+| VS Code, images on | by ID | 285 | The cat showed for about a second, then vanished. The program kept going to the end. |
+| VS Code, images on | `--resend` | 285 | The cat ran there and back. |
+| VS Code, images off | either | none | It said the terminal cannot show images, and exited. |
+
+* The frame counts differ only because the windows were different widths.
+* The cat vanished after about 12 steps, one loop of frames. So in VS Code, removing a frame from the screen also deletes the uploaded picture. After the first loop there is nothing left to place.
+* Result: Stray sends the frame with every change instead of placing it by ID. See [Drawing The Cat](ARCHITECTURE.md#drawing-the-cat).
+* Not tested: tmux. It moves to Phase 2.
 
 ### Phase 0: October 2, 2026, Written Again, No Real Terminal Yet
 

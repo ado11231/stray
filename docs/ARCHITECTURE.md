@@ -240,22 +240,24 @@ stateDiagram-v2
 
 ## Drawing The Cat
 
-* Stray uses three actions of the image protocol: upload, place, and remove. VS Code supports these.
+* Stray uses two actions of the image protocol: send a frame and show it, and remove it. VS Code supports both.
+* It does not place an uploaded frame again by its ID. In VS Code, removing a frame from the screen also deletes the picture, so it cannot be placed again. The image test showed this.
 
 ### Once, At Startup
 
 1. Ask the terminal for its text color.
 2. Color the frames built into the program, and make a flipped copy of each.
-3. Upload every frame. Each gets an ID number.
+3. Keep every frame in memory, ready to send.
 
 ### On Each Change
 
 1. Move to the cat's spot in the bar.
-2. Place the new frame by its ID, scaled to the height of the bar.
-3. Remove the old frame.
+2. Send the new frame and show it there, scaled to the height of the bar. Two IDs take turns.
+3. Remove the old frame and its picture.
 4. Put the cursor back.
 
-* Placing before removing means there is never a moment with no cat.
+* Showing the new frame before removing the old one means there is never a moment with no cat.
+* One frame is about 30 KB of text. The cat changes only a few times a second at most, so this is small.
 * Every image command tells the terminal not to answer. An answer would arrive as typed keys.
 * Each wrapper picks its own random range of frame IDs, and removes only its own frames. Other programs' images and the cats in other tmux panes are safe.
 * Stray restores the cursor from the screen model. It does not use the terminal's one "save the cursor" slot, because programs do.
@@ -388,8 +390,8 @@ flowchart TD
 | Coding agents redraw the screen often. | Redraw the bar after any output that could have touched it. |
 | Tools that run on Node may show the name `node`. | Look at the full command line. |
 | A resize can reflow old text into the bar. | Draw the full bar again after every resize. |
-| VS Code's image support is new and has gaps. | Use only upload, place, and remove. Run the image test first. |
-| Swapping frames may flicker. | Place before removing. The image test has a second mode to compare. |
+| VS Code's image support is new and has gaps. | Send each frame again instead of placing it by ID. The image test showed this works in kitty and VS Code. |
+| Swapping frames may flicker. | Show the new frame before removing the old one. No flicker in the image test. |
 | A program inside the shell may show its own images. | Random ID ranges, and remove only Stray's frames. |
 | Programs can move the cursor into the bar. | Stop every move at the last shell row. |
 | Drawing in the middle of a batched update can tear the screen. | Wait for the batch to end. |
@@ -408,7 +410,7 @@ stray/
 │   ├── terminal.rs        the real terminal: raw input, size, and resize
 │   ├── screen.rs          the screen model and the checks that keep the bar safe
 │   ├── bar.rs             reserves the rows and draws the bar
-│   ├── image.rs           the image protocol: check, upload, place, remove, and tmux
+│   ├── image.rs           the image protocol: check, send, remove, and tmux
 │   ├── greeting.rs        the cat at the prompt on launch
 │   ├── cat.rs             the cat brain: modes, actions, and movement
 │   ├── frames.rs          the cat's frames and the habitat items
@@ -430,7 +432,7 @@ stray/
 | `terminal.rs` | Raw mode, size, and resizes of the real terminal. Restores it on exit. | none |
 | `screen.rs` | The screen model. Spots clears, region resets, full screen views, and batched updates. Stops cursor moves into the bar. Removes the prompt mark. | none |
 | `bar.rs` | Sets the scroll region, draws the bar, and restores the cursor. | `screen`, `image`, `frames` |
-| `image.rs` | The image check. Uploads, places, and removes frames. Inside tmux, wraps codes for passthrough and prints placeholders. | none |
+| `image.rs` | The image check. Sends, shows, and removes frames. Inside tmux, wraps codes for passthrough and prints placeholders. | none |
 | `greeting.rs` | Places the cat at the prompt and runs it to the bar. | `screen`, `image`, `frames` |
 | `cat.rs` | Picks the mode, resting action, position, and frame. | `activity`, `stage`, `frames` |
 | `frames.rs` | Holds every frame. Colors and flips them. | none |
