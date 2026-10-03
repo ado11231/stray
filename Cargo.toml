@@ -1,0 +1,10 @@
+[package]
+name = "stray-cat"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A small cat that lives in your terminal."
+
+[[bin]]
+name = "stray"
+path = "src/main.rs"
