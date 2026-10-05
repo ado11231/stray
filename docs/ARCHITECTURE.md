@@ -2,7 +2,7 @@
 
 * How Stray works inside, and what every source file will do.
 * What the cat does: [DESIGN.md](DESIGN.md). Order of work: [ROADMAP.md](ROADMAP.md).
-* Only a small image test is written so far. Plan as of October 2, 2026.
+* Only a small image test is written so far. Plan as of October 5, 2026.
 
 ## Contents
 
@@ -15,8 +15,8 @@
 7. [Knowing What Is Happening](#knowing-what-is-happening)
 8. [The Cat Brain](#the-cat-brain)
 9. [Drawing The Cat](#drawing-the-cat)
-10. [The Launch Greeting](#the-launch-greeting)
-11. [Time And Stages](#time-and-stages)
+10. [The Prompt](#the-prompt)
+11. [The Schedule](#the-schedule)
 12. [How Commands Reach The Cat](#how-commands-reach-the-cat)
 13. [How Stray Starts](#how-stray-starts)
 14. [Where Data Is Stored](#where-data-is-stored)
@@ -50,7 +50,8 @@
 | **Frame** | One small picture of the cat. |
 | **Image protocol** | The escape codes kitty invented for showing pictures. |
 | **Image check** | Asking the terminal whether it understands the image protocol. |
-| **State file** | The saved hours, name, and settings shared by every window. |
+| **Schedule** | The times of day the cat eats, naps, and sleeps. |
+| **State file** | The cat's name and a few settings, shared by every window. |
 | **Batched update** | A program asking the terminal to show many changes at once, so the screen does not flicker. Claude Code does this. |
 | **Passthrough** | A tmux setting that lets image codes go through tmux to the terminal app. |
 | **Placeholder** | A special text character that stands in for one cell of an image. Used inside tmux. |
@@ -70,12 +71,14 @@ flowchart LR
         Loop["Main loop"]
         Model["Screen model"]
         Watch["Activity watcher"]
+        Clock["Schedule"]
         Brain["Cat brain"]
         Bar["Bar painter"]
         Loop --> Model
         Loop --> Watch
         Watch --> Brain
         Model --> Brain
+        Clock --> Brain
         Brain --> Bar
     end
 
@@ -86,15 +89,15 @@ flowchart LR
         Shell --> Progs
     end
 
-    State[("State file<br/>hours, stage, name")]
-    Cmds["stray pet, stray sit,<br/>and other commands"]
+    State[("State file<br/>name, quiet,<br/>last treat and pet")]
+    Cmds["stray treat, stray pet,<br/>and other commands"]
 
     Keys -->|keys| Loop
     Loop -->|the same keys| Shell
     Shell -->|output| Loop
     Loop -->|the same output| Screen
-    Bar -->|the cat, in the bar| Screen
-    Brain <--> State
+    Bar -->|the cat| Screen
+    State --> Brain
     Cmds --> State
 
     style Term fill:none,stroke:#888
@@ -107,15 +110,15 @@ flowchart LR
 ## How The Code Is Organized
 
 * One Rust package, `stray-cat`, that builds one program, `stray`.
-* Needs Rust 1.89 or newer, for the file lock built into Rust.
+* Needs Rust 1.89 or newer.
 
 ```mermaid
 flowchart TD
     Main["main.rs<br/>reads the command line"]
-    Wrap["The wrapper<br/>wrapper, terminal, screen, bar, image, greeting"]
-    Cat["The cat<br/>cat, frames, activity, stage"]
+    Wrap["The wrapper<br/>wrapper, terminal, screen, bar, image, prompt"]
+    Cat["The cat<br/>cat, frames, activity, schedule"]
     Store["Saved data<br/>state, config"]
-    Cmd["Commands<br/>stats, pet, control, name, install"]
+    Cmd["Commands<br/>treat, pet, quiet, name, install"]
     Main --> Wrap
     Main --> Cmd
     Wrap --> Cat
@@ -152,7 +155,7 @@ sequenceDiagram
     Term-->>You: the letter appears, the cat reacts
 ```
 
-* The main loop waits on keys, shell output, and a timer. The timer stops when the cat is still.
+* The main loop waits on keys, shell output, and a timer. The timer slows down when the cat is still.
 
 ## The Bar
 
@@ -187,6 +190,7 @@ sequenceDiagram
 | **Keys** | Stray sees every key. | You are typing, or how long you have been idle. |
 | **Output** | Stray sees all output. | Something is printing, or the screen is quiet. |
 | **Full screen flag** | The screen model has it. | A program such as `vim` has the screen. |
+| **Clock** | The local time, read once a minute. | Meal time, nap time, night, or free time. |
 
 * Any bytes from the keyboard count as a key. Stray does not work out which key.
 * Idle means the shell is in front, with no keys and no output for a set time.
@@ -197,31 +201,29 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Greeting: a window opens
-    Greeting --> Hidden: first key, before Moved In
-    Greeting --> Home: first key, Moved In or later
-    Hidden --> Peeking: now and then
-    Peeking --> Hidden: a moment later, or you type
-    Hidden --> Approaching: idle at the prompt
-    Approaching --> Hidden: you type
-    Home --> Following: you type at the prompt
-    Following --> Home: you stop typing
-    Home --> Watching: a program prints output
-    Watching --> Napping: the program runs a long time
+    [*] --> AtPrompt: a window opens in free time
+    [*] --> Sleeping: a window opens at nap or night time
+    AtPrompt --> Home: a key, output, or a resize
+    Home --> AtPrompt: idle at the prompt
+    Home --> Watching: a program runs
     Watching --> Home: back at the prompt
-    Napping --> Home: back at the prompt
-    Home --> Napping: idle for a long time
+    Home --> Eating: meal time
+    Eating --> Home: the meal is done
+    Home --> Sleeping: nap or night time, or stray quiet
+    Sleeping --> Home: the time ends, or stray come
 ```
 
-| Stage | Modes Allowed |
-| --- | --- |
-| Scared | Greeting, Hidden |
-| Peeking | Greeting, Hidden, Peeking |
-| Curious | Greeting, Hidden, Peeking, Approaching |
-| Moved In and later | Greeting, Home, Following, Watching, Napping |
+| Mode | Where The Cat Is | What It Does |
+| --- | --- | --- |
+| **AtPrompt** | Just after the `>` | Sits and waits. |
+| **Home** | The bar | Picks a resting action. |
+| **Watching** | The bar | Watches, naps after a long run, perks up, or flinches. |
+| **Eating** | Its bowl in the bar | Eats for a few minutes. |
+| **Sleeping** | The home spot | Sleeps. Keys do not wake it. |
 
-* `stray sit`, `stray quiet`, and `stray hide` pin the cat in one mode until `stray come`.
-* Each tick, the brain returns a frame, a column in the bar, and whether anything changed.
+* Moving between the prompt and the bar is part of the change, not a mode of its own. The cat runs down and climbs up.
+* A treat or a pet is a short reaction on top of any mode. Then the cat goes back to that mode.
+* Each tick, the brain returns a frame, where to draw it, and whether anything changed.
 
 ### Resting Actions
 
@@ -229,14 +231,13 @@ stateDiagram-v2
 
 | Action | Starting Weight | Movement |
 | --- | --- | --- |
-| Sit | 50 | None. |
-| Sleep | 25 | None. The weight grows with idle time. |
-| Walk | 12 | Across the bar and back, slowly. |
-| Play | 9 | In place. |
-| Run | 4 | Across the bar, fast. |
+| Sit | 55 | None. |
+| Walk | 20 | Across the bar and back, slowly. |
+| Play | 15 | In place. |
+| Run | 10 | Across the bar, fast. |
 
 * Weights and times live in the settings file.
-* Any key ends Sleep. A program starting ends every action.
+* A program starting ends every action.
 
 ## Drawing The Cat
 
@@ -251,8 +252,8 @@ stateDiagram-v2
 
 ### On Each Change
 
-1. Move to the cat's spot in the bar.
-2. Send the new frame and show it there, scaled to the height of the bar. Two IDs take turns.
+1. Move to the cat's spot, in the bar or at the prompt.
+2. Send the new frame and show it there, scaled to two rows. Two IDs take turns.
 3. Remove the old frame and its picture.
 4. Put the cursor back.
 
@@ -278,38 +279,54 @@ stateDiagram-v2
 4. tmux treats the placeholders as text, so the cat moves and hides with its pane.
 
 * kitty supports placeholders. Other terminals are untested inside tmux.
+* Inside tmux, the cat stays in the bar and does not come up to the prompt.
 
-## The Launch Greeting
+## The Prompt
 
-1. Wait for the first prompt mark. This skips anything the shell prints while starting.
-2. Check the screen model. The space where the cat would sit must be empty.
-3. Place the cat's frame next to the cursor, just after the `>`.
-4. On the first key, remove the frame, then forward the key.
-5. Run the cat fast down the empty rows into the bar.
+### Sitting On The Prompt
 
-* This is the same at every stage. Only where the run ends changes: hidden past the edge, or in the home corner.
-* If the space is not empty, or the window is resized, the cat starts in the bar.
+1. Wait for a prompt mark. At launch, this skips anything the shell prints while starting.
+2. Check the screen model. The two cells after the cursor, and the row below them, must be empty.
+3. Place the cat's frame there, just after the `>`.
 
-## Time And Stages
+### Running Down
 
-1. About once a minute, a wrapper locks the state file.
-2. It reads the time of the last count.
-3. If a minute or more has passed, it adds that time to the total.
-4. If another window already counted this minute, it adds nothing.
-5. It unlocks the file.
+1. On the first key, remove the frame, then forward the key.
+2. Run the cat fast down the empty rows below the prompt into the bar.
+3. It ends in the home spot.
 
-* A gap longer than a few minutes, such as a sleeping laptop, is not counted.
-* The stage is never saved. It is worked out from the hours and the settings each time.
+* Output or a resize removes the frame the same way, and the cat starts in the bar.
+
+### Coming Back Up
+
+1. The cat is in Home mode, the shell is in front, and you have been idle for 30 seconds.
+2. The brain checks that the space after the `>` is still empty.
+3. The cat walks along the bar to the column under the cursor.
+4. It climbs up the empty rows below the prompt and sits after the `>`.
+
+* If you type while it climbs, it turns and runs back down.
+* After a clear, the prompt is at the top and the rows below are empty, so the climb is long. After a build, the prompt is just above the bar, so the climb is short.
+
+## The Schedule
+
+1. Once a minute, the wrapper reads the local time.
+2. It looks the time up in the schedule from the settings file.
+3. If the part of the day changed, the brain moves to that mode.
+
+* Nothing is saved. Every window reads the same clock, so every cat keeps the same day.
+* A meal lasts a few minutes from the moment it starts, or from when the window opens during it.
+* A test setting shifts the clock, so a whole day can be checked in a few minutes.
+* Local time with the right time zone comes from the `jiff` crate.
 
 ## How Commands Reach The Cat
 
-1. A command such as `stray sit` changes the state file and exits.
+1. A command such as `stray treat` changes the state file and exits.
 2. Every wrapper checks a few times a second whether the file changed.
 3. When it has, the wrapper loads it and the cat reacts.
 
 * This is why a command applies in every window.
-* `sit`, `quiet`, and `hide` are saved as the cat's current mode.
-* `stray pet` is a one time event, so it saves the time it was run. Each wrapper sees a newer time than the last one it saw and plays the petting reaction once.
+* `quiet` is saved as on or off.
+* `treat` and `pet` are one time events, so each saves the time it was run. Each wrapper sees a newer time than the last one it saw and plays the reaction once.
 
 ## How Stray Starts
 
@@ -322,7 +339,7 @@ command -v stray >/dev/null && eval "$(stray init zsh)"
 ```mermaid
 flowchart TD
     Start["A shell starts and runs the line"] --> Own{"Is this Stray's own shell?<br/>The mark names this terminal"}
-    Own -->|Yes| Hook["Set up the prompt mark"]
+    Own -->|Yes| Hook["Set up the prompt mark<br/>and the cat's name"]
     Hook --> Ready["The prompt appears"]
     Own -->|No| Skip{"Is this an ssh session, or tmux<br/>started from a Stray window?"}
     Skip -->|Yes| Normal["Do nothing<br/>the shell starts as normal"]
@@ -346,6 +363,18 @@ flowchart TD
 * macOS terminals always start login shells, and files such as `~/.zprofile` must still run.
 * The new shell gets the same arguments and the same environment, plus the mark.
 
+### The Cat's Name As A Command
+
+* If the cat has a name, `stray init` adds a small shell function with that name:
+
+```sh
+mochi() { stray "$@"; }
+```
+
+* It is added only if no command with that name exists yet.
+* `stray name` checks the name too: one word of letters, numbers, and dashes, and not a command you already have.
+* The function is made when a shell starts, so a new name works in new windows.
+
 ### The Image Check
 
 1. `stray start` sends a tiny test picture, marked "check only, do not show".
@@ -364,8 +393,8 @@ flowchart TD
 
 | What | File | Holds |
 | --- | --- | --- |
-| Settings | `config.toml` in the config folder | Stage hours, bar height, idle times, action weights, and the test speed. |
-| State | `state.json` in the data folder | Total time, the time of the last count, the cat's name, whether it is sitting, quiet, or hidden, the time of the last pet, and whether the image hint was shown. |
+| Settings | `config.toml` in the config folder | The schedule, bar height, idle times, action weights, and the test clock shift. |
+| State | `state.json` in the data folder | The cat's name, whether it is quiet, the time of the last treat and the last pet, and whether the image hint was shown. |
 
 * The state file is written to a new file and swapped in, so a crash cannot leave it half written.
 
@@ -374,7 +403,7 @@ flowchart TD
 * **Fails open.** If anything goes wrong while starting, `stray start` runs your shell directly.
 * **Cleans up after a crash.** If Stray crashes after the shell has started, the shell ends with it. Before it exits, Stray puts the terminal back to normal, removes its frames, and prints one line that says what happened.
 * **Does not read your work.** Output is used only to follow the cursor, clears, and the prompt mark. None is saved.
-* **Does not record commands.** The state file holds time, a name, and a few settings.
+* **Does not record anything you do.** The state file holds a name and a few settings.
 * **Unknown escape codes pass through.** Features such as VS Code shell integration keep working.
 * **No network.**
 * **Keeps the exit code.** `stray start` exits with the shell's own code.
@@ -395,7 +424,9 @@ flowchart TD
 | A program inside the shell may show its own images. | Random ID ranges, and remove only Stray's frames. |
 | Programs can move the cursor into the bar. | Stop every move at the last shell row. |
 | Drawing in the middle of a batched update can tear the screen. | Wait for the batch to end. |
-| Placed images do not move with tmux panes. | Use placeholders inside tmux. |
+| A cat at the prompt sits where your text will go. | Remove it before forwarding the first key. Check the space is empty before placing it. |
+| A prompt with text on the right, such as a clock, may leave no empty space. | Check the screen model. If there is no room, the cat stays in the bar. |
+| Placed images do not move with tmux panes. | Use placeholders inside tmux, and keep the cat in the bar. |
 | Placeholders may only work in kitty. | Test them in kitty first. Treat other terminals as untested inside tmux. |
 | tmux may have passthrough off. | The image check fails and the hint names the setting. |
 
@@ -411,12 +442,12 @@ stray/
 │   ├── screen.rs          the screen model and the checks that keep the bar safe
 │   ├── bar.rs             reserves the rows and draws the bar
 │   ├── image.rs           the image protocol: check, send, remove, and tmux
-│   ├── greeting.rs        the cat at the prompt on launch
+│   ├── prompt.rs          the cat on the prompt: sitting, running down, coming back
 │   ├── cat.rs             the cat brain: modes, actions, and movement
-│   ├── frames.rs          the cat's frames and the habitat items
-│   ├── activity.rs        the five signals, turned into plain facts
-│   ├── stage.rs           hours to stage
-│   ├── state.rs           the state file: load, save, lock, and count time
+│   ├── frames.rs          the cat's frames and its bowl
+│   ├── activity.rs        the signals, turned into plain facts
+│   ├── schedule.rs        the time of day to meal, nap, night, or free time
+│   ├── state.rs           the state file: load and save
 │   ├── config.rs          the settings file and its defaults
 │   ├── shell.rs           the startup line and the scripts for bash and zsh
 │   ├── commands/          one file per command
@@ -428,27 +459,27 @@ stray/
 | File | Purpose | Uses |
 | --- | --- | --- |
 | `main.rs` | Reads the command line with `clap`. | every command, `wrapper` |
-| `wrapper.rs` | Runs the image check and the shell in a PTY. Owns the main loop. | `terminal`, `screen`, `image`, `bar`, `greeting`, `cat`, `activity`, `state` |
+| `wrapper.rs` | Runs the image check and the shell in a PTY. Owns the main loop. | `terminal`, `screen`, `image`, `bar`, `prompt`, `cat`, `activity`, `schedule`, `state` |
 | `terminal.rs` | Raw mode, size, and resizes of the real terminal. Restores it on exit. | none |
 | `screen.rs` | The screen model. Spots clears, region resets, full screen views, and batched updates. Stops cursor moves into the bar. Removes the prompt mark. | none |
 | `bar.rs` | Sets the scroll region, draws the bar, and restores the cursor. | `screen`, `image`, `frames` |
 | `image.rs` | The image check. Sends, shows, and removes frames. Inside tmux, wraps codes for passthrough and prints placeholders. | none |
-| `greeting.rs` | Places the cat at the prompt and runs it to the bar. | `screen`, `image`, `frames` |
-| `cat.rs` | Picks the mode, resting action, position, and frame. | `activity`, `stage`, `frames` |
+| `prompt.rs` | Places the cat after the `>`, and moves it between the prompt and the bar. | `screen`, `image`, `frames` |
+| `cat.rs` | Picks the mode, resting action, position, and frame. | `activity`, `schedule`, `frames` |
 | `frames.rs` | Holds every frame. Colors and flips them. | none |
 | `activity.rs` | Tracks typing, idle time, output, and the foreground program. | none |
-| `stage.rs` | Turns hours into a stage. | `config` |
-| `state.rs` | Loads, saves, and locks the state file. Counts each minute once. | `config` |
+| `schedule.rs` | Turns the time of day into meal, nap, night, or free time. | `config` |
+| `state.rs` | Loads and saves the state file. | none |
 | `config.rs` | Reads the settings file and supplies defaults. | none |
-| `shell.rs` | The scripts for `stray init`, the startup line, and the checks for the mark, ssh, and tmux. | none |
+| `shell.rs` | The scripts for `stray init`, the startup line, the name function, and the checks for the mark, ssh, and tmux. | `state` |
 
 ### Commands
 
 | File | Command | Uses |
 | --- | --- | --- |
-| `commands/stats.rs` | `stray stats` | `state`, `stage` |
-| `commands/pet.rs` | `stray pet` | `state`, `stage` |
-| `commands/control.rs` | `stray sit`, `stray quiet`, `stray hide`, and `stray come` | `state` |
+| `commands/treat.rs` | `stray treat` | `state` |
+| `commands/pet.rs` | `stray pet` | `state` |
+| `commands/quiet.rs` | `stray quiet` and `stray come` | `state` |
 | `commands/name.rs` | `stray name` | `state` |
 | `commands/install.rs` | `stray install` and `stray uninstall` | `shell` |
 
@@ -461,16 +492,18 @@ stray/
 | `portable-pty` | The PTY, the shell inside it, resizing, and the foreground program. |
 | `vt100` | The screen model. |
 | `crossterm` | Raw mode and the size of the real terminal. |
+| `signal-hook` | Noticing when the window is resized. |
 | `png` | Reading the frames built into the program. |
 | `base64` | Preparing frames to send to the terminal. |
 | `clap` | Reading the command line. |
 | `serde`, `serde_json`, and `toml` | The state and settings files. |
 | `directories` | Finding the config and data folders. |
+| `jiff` | The local time, for the schedule. |
 | `sysinfo` | The name and command line of the foreground program, on macOS and Linux. |
 | `anyhow` | Errors. |
 
 ### Tests
 
 * Unit tests sit at the bottom of the file they test.
-* `cat.rs`, `stage.rs`, and `state.rs` need no terminal, so most rules are tested there.
+* `cat.rs`, `schedule.rs`, and `state.rs` need no terminal, so most rules are tested there.
 * `screen.rs` is tested by feeding it recorded output.

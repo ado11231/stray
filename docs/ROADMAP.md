@@ -2,7 +2,7 @@
 
 * What Stray does today, what has been tested, and what comes next.
 * A feature is complete only after it has run in a real terminal.
-* Last updated October 2, 2026.
+* Last updated October 5, 2026.
 
 ## Contents
 
@@ -20,27 +20,26 @@
 | Phase | Goal | Status |
 | --- | --- | --- |
 | 0 | An image test: a cat running along the bottom rows | Complete |
-| 1 | A wrapper you cannot notice, the clock, and `stray stats` | Next |
+| 1 | A wrapper you cannot notice | Next |
 | 2 | The image check, and the bar with a cat that sits still | Planned |
-| 3 | The launch greeting | Planned |
-| 4 | Stages, behavior, and resting actions | Planned |
-| 5 | Commands to pet, quiet, and name the cat | Planned |
-| 6 | The habitat | Planned |
-| 7 | A public release | Planned |
+| 3 | The prompt: sit, run down, come back when idle | Planned |
+| 4 | The cat's day and resting actions | Planned |
+| 5 | Commands to treat, pet, quiet, and name the cat | Planned |
+| 6 | A public release | Planned |
 
 ```mermaid
 flowchart LR
-    P0["0. Image test"] --> P1["1. Wrapper<br/>and clock"]
+    P0["0. Image test"] --> P1["1. Wrapper"]
     P1 --> P2["2. The bar"]
-    P2 --> P3["3. Greeting"]
-    P3 --> P4["4. Stages and<br/>behavior"]
+    P2 --> P3["3. The prompt"]
+    P3 --> P4["4. The cat's day"]
     P4 --> P5["5. Commands"]
-    P5 --> P6["6. Habitat"]
-    P6 --> P7["7. Release"]
+    P5 --> P6["6. Release"]
 ```
 
 * Phase 0 is a throwaway test. Every later phase leaves Stray usable every day.
 * A phase is complete when its **Done when** line is true in kitty and in the VS Code terminal, on macOS.
+* On October 5, 2026 the plan was made simpler. Hours, trust stages, `stray stats`, and the habitat were dropped. The cat now sits on the prompt and keeps a daily schedule.
 
 ## Complete
 
@@ -63,7 +62,7 @@ flowchart LR
 
 ## Next
 
-### Phase 1: The Wrapper And The Clock
+### Phase 1: The Wrapper
 
 1. `stray start` runs your shell in a PTY and passes every key and all output through.
 2. The inner shell starts as a login shell when the first one was.
@@ -72,16 +71,13 @@ flowchart LR
 5. If it crashes later, it puts the terminal back to normal and prints one line.
 6. The mark holds the name of Stray's PTY, so a leaked copy does not stop a new window from starting Stray.
 7. Inside ssh sessions, and inside tmux started from a Stray window, Stray steps aside.
-8. It counts time once a minute, once across all windows.
-9. `stray stats` shows total hours.
-10. `stray install` and `stray uninstall` add and remove the startup line.
+8. `stray install` and `stray uninstall` add and remove the startup line.
 
 * **Done when:**
   * `vim`, Claude Code, tmux, ssh, colors, Ctrl C, and resizing behave the same inside Stray as outside.
   * Everything set in `~/.zprofile`, such as `PATH`, is still there inside Stray.
   * `code .` and a new kitty window opened from a Stray shell both start their own Stray.
   * Typing feels no slower. Printing a large file takes about as long as without Stray.
-  * Two windows open for ten minutes add ten minutes, not twenty.
 
 ## Planned
 
@@ -92,7 +88,7 @@ flowchart LR
 1. Run the image check. If it fails, run the shell directly and print the hint once.
 2. Reserve the bottom two rows.
 3. Color the frames to match the terminal's text.
-4. Place a cat that sits still in the home corner.
+4. Place a cat that sits still in the home spot.
 5. Keep the bar and the cat whole through clears, full screen programs, resets, and resizes.
 6. Stop programs from moving the cursor into the bar.
 7. Draw only between pieces of output, and wait for batched updates to end.
@@ -107,47 +103,47 @@ flowchart LR
   * tmux started on its own shows a whole bar in every pane, and the cats stay put when you switch panes and windows.
   * An ssh session shows one cat, in your own bar.
 
-### Phase 3: The Greeting
+### Phase 3: The Prompt
 
 1. Add the prompt mark to the bash and zsh setup.
-2. Place the cat next to the `>` of the first prompt, only when the space is empty.
-3. On the first key, remove the cat and run it fast down to the bar. This is the same at every stage.
-
-* **Done when:** every new window shows the cat at the prompt, and no piece of it is left behind.
-
-### Phase 4: Stages And Behavior
-
-1. Turn hours into a stage.
-2. Add the speed setting for testing.
-3. Add the modes: hidden, peeking, approaching, home, following, watching, and napping.
-4. Read the foreground program.
-5. Add the reactions for coding agents, long runs, and failed commands.
-6. Add the resting actions: sit, sleep, walk, play, and run.
-7. Draw the final frames, about 15 to 18.
+2. Place the cat just after the `>` of the first prompt, only when the space is empty.
+3. On the first key, remove the cat and run it fast down to the home spot.
+4. After 30 seconds idle at the prompt, walk the cat along the bar and climb it up to the `>`.
+5. Send it back down on a key, output, or a resize.
 
 * **Done when:**
-  * With the speed turned up, the cat goes from scared to bonded in one sitting.
+  * Every new window shows the cat at the prompt, and no piece of it is left behind.
+  * Left idle, the cat comes back to the prompt after a clear and after a build.
+  * Typing while it climbs sends it back down, and the key still reaches the shell.
+
+### Phase 4: The Cat's Day
+
+1. Read the local time and turn it into meal, nap, night, or free time.
+2. Add the test setting that shifts the clock.
+3. Add the modes: at the prompt, home, watching, eating, and sleeping.
+4. Read the foreground program.
+5. Add the reactions for coding agents, long runs, and failed commands.
+6. Add the resting actions: sit, walk, play, and run.
+7. Draw the final frames, about 17 to 20, and the bowl.
+
+* **Done when:**
+  * With the clock shifted, the cat eats, naps, and sleeps at the right times, in every open window.
+  * A sleeping cat does not come to the prompt, and typing does not wake it.
   * Inside Claude Code and `vim`, the cat never leaves the bar.
-  * Left alone for ten minutes, a moved in cat does each resting action.
+  * Left alone for ten minutes in free time, the cat does each resting action.
 
 ### Phase 5: Commands
 
-1. `stray pet`, once the cat is bonded. It saves the time of the pet, and each window reacts once.
-2. `stray sit`, `stray quiet`, `stray hide`, and `stray come`.
-3. `stray name`.
-4. `stray stats` also shows the stage, the name, and the time until the next stage.
+1. `stray treat` and `stray pet`. Each saves the time it was run, and each window reacts once.
+2. `stray quiet` and `stray come`.
+3. `stray name`, and the name as a command in new windows.
 
-* **Done when:** a command in one window changes the cat in every window within a second.
+* **Done when:**
+  * A command in one window changes the cat in every window within a second.
+  * After `stray name mochi`, `mochi treat` works in a new window.
+  * A name that is already a command is refused.
 
-### Phase 6: The Habitat
-
-1. Unlock one item at 60, 100, and 150 hours.
-2. Place the items in the bar. The first is a bed.
-3. The cat sleeps in the bed.
-
-* **Done when:** each item appears at its hour and survives everything the bar survives.
-
-### Phase 7: Release
+### Phase 6: Release
 
 * Publish `stray-cat` on crates.io.
 * A README with a short recording.
@@ -156,11 +152,12 @@ flowchart LR
 
 ## Later Ideas
 
-1. Petting with the mouse.
-2. The cat stepping out of the bar toward an idle prompt.
-3. Trust that fades after a long time away.
-4. Other shells, such as fish.
-5. Testing iTerm2, Ghostty, and other terminals that pass the image check.
+1. The mouse scaring the cat.
+2. A different schedule on weekends.
+3. Hunger that grows if you skip treats.
+4. A bed, a toy, and other items in the bar.
+5. Other shells, such as fish.
+6. Testing iTerm2, Ghostty, and other terminals that pass the image check.
 
 ## Known Risks
 
@@ -175,15 +172,15 @@ flowchart LR
 7. Two rows may be too much in the short VS Code panel.
 8. Placeholders inside tmux may only work in kitty.
 9. Many tmux panes mean many bars, which may feel crowded.
+10. Prompts with text on the right may leave no room for the cat at the `>`.
 
 ## Open Questions
 
-1. What are the other plans for the bar?
-2. What are the last two habitat items?
-3. Should `stray hide` give the two rows back to the shell?
-4. Are 30 minutes, 2 hours, 10 hours, and 40 hours the right stage hours?
-5. Who draws the final frames?
-6. Is two rows tall enough for the cat?
+1. Is 30 seconds the right idle time before the cat comes back to the prompt?
+2. Are the schedule times right?
+3. Should `stray quiet` give the two rows back to the shell?
+4. Who draws the final frames?
+5. Is two rows tall enough for the cat?
 
 ## Test Record
 

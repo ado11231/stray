@@ -1,7 +1,8 @@
 # Stray
 
 * A small cat that lives in your terminal.
-* It starts afraid of you. The more hours your terminal is open, the more it trusts you.
+* It sits on your prompt, runs to the bottom of the screen when you type, and comes back when you stop.
+* It eats, naps, and sleeps by the clock. You can give it treats, pet it, and name it.
 * Early work. Only an image test runs so far.
 
 ## Try The Image Test
