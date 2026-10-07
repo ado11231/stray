@@ -13,7 +13,10 @@ enum Command {
     Install,
     Uninstall,
     #[command(hide = true)]
-    Start,
+    Start {
+        #[arg(long)]
+        login: bool,
+    },
     #[command(hide = true)]
     Init {
         shell: Shell,
@@ -32,7 +35,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Install => bail!("install is not built yet"),
         Command::Uninstall => bail!("uninstall is not built yet"),
-        Command::Start => bail!("start is not built yet"),
+        Command::Start { login } => bail!("start is not built yet (login: {login})"),
         Command::Init { shell: _ } => bail!("init is not built yet"),
     }
 }
@@ -57,7 +60,14 @@ mod tests {
 
         assert!(matches!(install.command, Command::Install));
         assert!(matches!(uninstall.command, Command::Uninstall));
-        assert!(matches!(start.command, Command::Start));
+        assert!(matches!(start.command, Command::Start { login: false }));
+    }
+
+    #[test]
+    fn start_accepts_login_flag() {
+        let cli = Cli::try_parse_from(["stray", "start", "--login"]).unwrap();
+
+        assert!(matches!(cli.command, Command::Start { login: true }));
     }
 
     #[test]
