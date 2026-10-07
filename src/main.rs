@@ -1,4 +1,6 @@
-use anyhow::{Result, bail};
+mod wrapper;
+
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -12,6 +14,7 @@ struct Cli {
 enum Command {
     Install,
     Uninstall,
+    // Start and Init are helpers for shell startup, so they stay out of normal help.
     #[command(hide = true)]
     Start {
         #[arg(long)]
@@ -35,7 +38,14 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Install => bail!("install is not built yet"),
         Command::Uninstall => bail!("uninstall is not built yet"),
-        Command::Start { login } => bail!("start is not built yet (login: {login})"),
+        Command::Start { login } => {
+            // Keep the shell path as an OS string because paths may contain non-UTF-8 bytes.
+            let shell_path = std::env::var_os("SHELL").context("SHELL is not set")?;
+
+            let command = wrapper::build_shell_command(&shell_path, login);
+            // Show the prepared command until PTY launching is implemented.
+            bail!("start is not built yet (command: {:?})", command.get_argv())
+        }
         Command::Init { shell: _ } => bail!("init is not built yet"),
     }
 }
