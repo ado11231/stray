@@ -1,3 +1,4 @@
+mod terminal;
 mod wrapper;
 
 use anyhow::{Context, Result, bail};
@@ -39,12 +40,23 @@ fn main() -> Result<()> {
         Command::Install => bail!("install is not built yet"),
         Command::Uninstall => bail!("uninstall is not built yet"),
         Command::Start { login } => {
-            // Keep the shell path as an OS string because paths may contain non-UTF-8 bytes.
+            // Read the configured shell path.
             let shell_path = std::env::var_os("SHELL").context("SHELL is not set")?;
-
             let command = wrapper::build_shell_command(&shell_path, login);
-            // Show the prepared command until PTY launching is implemented.
-            bail!("start is not built yet (command: {:?})", command.get_argv())
+
+            let size = terminal::read_size()?;
+            let pty = wrapper::open_pty(size)?;
+
+            // Read size assigned to PTY.
+            let actual_size = pty.master.get_size().context("Could not read PTY size")?;
+
+            // Show setup until shell launching is ready.
+            bail!(
+                "start is not built yet (command: {:?}, PTY: {} columns, {} rows)",
+                command.get_argv(),
+                actual_size.cols,
+                actual_size.rows
+            )
         }
         Command::Init { shell: _ } => bail!("init is not built yet"),
     }

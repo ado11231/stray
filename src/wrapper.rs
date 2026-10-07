@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
+use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
 use std::ffi::OsStr;
-
-use portable_pty::CommandBuilder;
 
 /// Prepares the shell command without starting a process.
 pub fn build_shell_command(shell_path: &OsStr, login: bool) -> CommandBuilder {
@@ -16,10 +16,38 @@ pub fn build_shell_command(shell_path: &OsStr, login: bool) -> CommandBuilder {
     command
 }
 
+/// Opens terminal pair that Stray and shell will use.
+pub fn open_pty(size: PtySize) -> Result<PtyPair> {
+    native_pty_system()
+        .openpty(size)
+        .context("could not open PTY")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsString;
+
+    #[test]
+    fn pty_uses_requested_size() {
+        for (rows, cols) in [(24, 80), (40, 120), (10, 30)] {
+            let size = PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+
+            // Read the size from a real PTY to check what the OS received.
+            let pty = open_pty(size).expect("PTY should open");
+            let actual_size = pty.master.get_size().expect("PTY size should be readable");
+
+            assert_eq!(actual_size.rows, rows);
+            assert_eq!(actual_size.cols, cols);
+            assert_eq!(actual_size.pixel_width, 0);
+            assert_eq!(actual_size.pixel_height, 0);
+        }
+    }
 
     #[test]
     fn shell_command_is_interactive_without_login() {
