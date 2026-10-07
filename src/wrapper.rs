@@ -56,11 +56,43 @@ pub fn forward_output(mut reader: impl Read, mut writer: impl Write) -> Result<(
     }
 }
 
+/// Copies keyboard input to the shell until the input stream ends.
+pub fn forward_input(mut reader: impl Read, mut writer: impl Write) -> Result<()> {
+    std::io::copy(&mut reader, &mut writer).context("could not forward keyboard input")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
+
+    #[test]
+    fn input_preserves_text_and_control_keys() {
+        // Include Enter, Tab, Backspace, Ctrl+C, and an arrow key.
+        let input = b"echo hello\r\t\x7f\x03\x1b[A";
+        let mut output = Vec::new();
+
+        forward_input(&input[..], &mut output).expect("keyboard input should copy");
+
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn input_reports_a_write_failure() {
+        let mut output = [0u8; 2];
+
+        let error = forward_input(&b"echo hello\r"[..], &mut output[..])
+            .expect_err("writing past the available space should fail");
+
+        assert_eq!(error.to_string(), "could not forward keyboard input");
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            ErrorKind::WriteZero
+        );
+    }
 
     #[test]
     fn shell_starts_and_returns_its_exit_code() {
