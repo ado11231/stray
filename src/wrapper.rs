@@ -2,6 +2,24 @@ use anyhow::{Context, Result};
 use portable_pty::{Child, CommandBuilder, PtyPair, PtySize, native_pty_system};
 use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
+use std::thread::{self, JoinHandle};
+
+/// Stops and collects the shell when session leaves scope.
+pub struct ShellGuard {
+    pub child: Box<dyn Child + Send + Sync>,
+}
+
+impl Drop for ShellGuard {
+    fn drop(&mut self) {
+        // A shell that already finished does not need further cleanup.
+        if let Ok(Some(_)) = self.child.try_wait() {
+            return;
+        }
+        // Stops the shell, then collects exit status.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
 
 /// Prepares the shell command without starting a process.
 pub fn build_shell_command(shell_path: &OsStr, login: bool) -> CommandBuilder {
@@ -59,8 +77,17 @@ pub fn forward_output(mut reader: impl Read, mut writer: impl Write) -> Result<(
 /// Copies keyboard input to the shell until the input stream ends.
 pub fn forward_input(mut reader: impl Read, mut writer: impl Write) -> Result<()> {
     std::io::copy(&mut reader, &mut writer).context("could not forward keyboard input")?;
-
     Ok(())
+}
+/// Forwards keyboard input while the main thread handles output.
+pub fn start_input_thread(writer: impl Write + Send + 'static) -> Result<JoinHandle<Result<()>>> {
+    thread::Builder::new()
+        .name("keyboard-input".into())
+        .spawn(move || {
+            let stdin = std::io::stdin();
+            forward_input(stdin.lock(), writer)
+        })
+        .context("could not start keyboard input thread")
 }
 
 #[cfg(test)]
@@ -68,6 +95,99 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug)]
+    struct TestChild {
+        finished: bool,
+        poll_fails: bool,
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl portable_pty::ChildKiller for TestChild {
+        fn kill(&mut self) -> io::Result<()> {
+            self.calls.lock().unwrap().push("kill");
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+            Box::new(self.clone())
+        }
+    }
+
+    impl Child for TestChild {
+        fn try_wait(&mut self) -> io::Result<Option<portable_pty::ExitStatus>> {
+            self.calls.lock().unwrap().push("try_wait");
+            if self.poll_fails {
+                return Err(io::Error::other("could not check child"));
+            }
+            Ok(self
+                .finished
+                .then(|| portable_pty::ExitStatus::with_exit_code(7)))
+        }
+
+        fn wait(&mut self) -> io::Result<portable_pty::ExitStatus> {
+            self.calls.lock().unwrap().push("wait");
+            Ok(portable_pty::ExitStatus::with_exit_code(7))
+        }
+
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    #[test]
+    fn shell_guard_stops_and_collects_a_running_shell() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let guard = ShellGuard {
+            child: Box::new(TestChild {
+                finished: false,
+                poll_fails: false,
+                calls: Arc::clone(&calls),
+            }),
+        };
+
+        drop(guard);
+
+        assert_eq!(*calls.lock().unwrap(), ["try_wait", "kill", "wait"]);
+    }
+
+    #[test]
+    fn shell_guard_leaves_a_finished_shell_alone() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let guard = ShellGuard {
+            child: Box::new(TestChild {
+                finished: true,
+                poll_fails: false,
+                calls: Arc::clone(&calls),
+            }),
+        };
+
+        drop(guard);
+
+        assert_eq!(*calls.lock().unwrap(), ["try_wait"]);
+    }
+
+    #[test]
+    fn shell_guard_attempts_cleanup_when_checking_the_shell_fails() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let guard = ShellGuard {
+            child: Box::new(TestChild {
+                finished: false,
+                poll_fails: true,
+                calls: Arc::clone(&calls),
+            }),
+        };
+
+        drop(guard);
+
+        assert_eq!(*calls.lock().unwrap(), ["try_wait", "kill", "wait"]);
+    }
 
     #[test]
     fn input_preserves_text_and_control_keys() {

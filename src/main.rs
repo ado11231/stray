@@ -33,7 +33,7 @@ enum Shell {
     Bash,
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<std::process::ExitCode> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -47,16 +47,33 @@ fn main() -> Result<()> {
             let size = terminal::read_size()?;
             let pty = wrapper::open_pty(size)?;
 
-            // Read size assigned to PTY.
-            let actual_size = pty.master.get_size().context("Could not read PTY size")?;
+            // Reads everything shell prints.
+            let reader = pty
+                .master
+                .try_clone_reader()
+                .context("could not open PTY reader")?;
 
-            // Show setup until shell launching is ready.
-            bail!(
-                "start is not built yet (command: {:?}, PTY: {} columns, {} rows)",
-                command.get_argv(),
-                actual_size.cols,
-                actual_size.rows
-            )
+            // Send keyboard input to the shell.
+            let writer = pty
+                .master
+                .take_writer()
+                .context("could not open PTY writer")?;
+            let _raw_mode = terminal::RawModeGuard::enable()?;
+
+            let mut shell = wrapper::ShellGuard {
+                child: wrapper::spawn_shell(&pty, command)?,
+            };
+            // Close our extra handle so output ends when the shell exits.
+            drop(pty.slave);
+
+            let _input_thread = wrapper::start_input_thread(writer)?;
+
+            let stdout = std::io::stdout();
+            wrapper::forward_output(reader, stdout.lock())?;
+
+            let status = shell.child.wait().context("could not wait for shell")?;
+            let exit_code = u8::try_from(status.exit_code()).unwrap_or(1);
+            Ok(std::process::ExitCode::from(exit_code))
         }
         Command::Init { shell: _ } => bail!("init is not built yet"),
     }
