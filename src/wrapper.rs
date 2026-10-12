@@ -92,6 +92,27 @@ impl ShellSession {
             _raw_mode: raw_mode,
         })
     }
+
+    pub fn run(mut self) -> Result<ExitCode> {
+        let mut resize_guard = start_resize_thread(self.master, self.signals)?;
+        let _input_thread = start_input_thread(self.writer)?;
+
+        let stdout = std::io::stdout();
+
+        forward_output(self.reader, stdout.lock())?;
+
+        let status = self
+            .shell
+            .child
+            .wait()
+            .context("could not wait for shell")?;
+
+        resize_guard.stop()?;
+
+        let exit_code = u8::try_from(status.exit_code()).unwrap_or(1);
+
+        Ok(ExitCode::from(exit_code))
+    }
 }
 /// Prepares the shell command without starting a process.
 pub fn build_shell_command(shell_path: &OsStr, login: bool) -> CommandBuilder {

@@ -40,44 +40,16 @@ fn main() -> Result<std::process::ExitCode> {
         Command::Install => bail!("install is not built yet"),
         Command::Uninstall => bail!("uninstall is not built yet"),
         Command::Start { login } => {
-            // Read the configured shell path.
             let shell_path = std::env::var_os("SHELL").context("SHELL is not set")?;
             let command = wrapper::build_shell_command(&shell_path, login);
 
-            let signals = terminal::watch_resize()?;
-            let size = terminal::read_size()?;
-            let pty = wrapper::open_pty(size)?;
-
-            // Reads everything shell prints.
-            let reader = pty
-                .master
-                .try_clone_reader()
-                .context("could not open PTY reader")?;
-
-            // Send keyboard input to the shell.
-            let writer = pty
-                .master
-                .take_writer()
-                .context("could not open PTY writer")?;
-            let _raw_mode = terminal::RawModeGuard::enable()?;
-
-            let mut shell = wrapper::ShellGuard {
-                child: wrapper::spawn_shell(&pty, command)?,
-            };
-            // Close our extra handle so output ends when the shell exits.
-            drop(pty.slave);
-
-            let mut resize_guard = wrapper::start_resize_thread(pty.master, signals)?;
-
-            let _input_thread = wrapper::start_input_thread(writer)?;
-
-            let stdout = std::io::stdout();
-            wrapper::forward_output(reader, stdout.lock())?;
-
-            let status = shell.child.wait().context("could not wait for shell")?;
-            resize_guard.stop()?;
-            let exit_code = u8::try_from(status.exit_code()).unwrap_or(1);
-            Ok(std::process::ExitCode::from(exit_code))
+            match wrapper::ShellSession::start(command) {
+                Ok(session) => session.run(),
+                Err(error) => {
+                    eprintln!("stray: {error}; starting shell directly");
+                    wrapper::run_shell_directly(&shell_path, login)
+                }
+            }
         }
         Command::Init { shell: _ } => bail!("init is not built yet"),
     }
