@@ -1,10 +1,10 @@
+use crate::terminal;
 use anyhow::{Context, Result};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtyPair, PtySize, native_pty_system};
+use signal_hook::iterator::{Handle, Signals};
 use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
 use std::thread::{self, JoinHandle};
-use signal_hook::iterator::{Handle, Signals};
-use crate::terminal;
 
 /// Stops and collects the shell when session leaves scope.
 pub struct ShellGuard {

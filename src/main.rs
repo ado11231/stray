@@ -44,6 +44,7 @@ fn main() -> Result<std::process::ExitCode> {
             let shell_path = std::env::var_os("SHELL").context("SHELL is not set")?;
             let command = wrapper::build_shell_command(&shell_path, login);
 
+            let signals = terminal::watch_resize()?;
             let size = terminal::read_size()?;
             let pty = wrapper::open_pty(size)?;
 
@@ -66,12 +67,15 @@ fn main() -> Result<std::process::ExitCode> {
             // Close our extra handle so output ends when the shell exits.
             drop(pty.slave);
 
+            let mut resize_guard = wrapper::start_resize_thread(pty.master, signals)?;
+
             let _input_thread = wrapper::start_input_thread(writer)?;
 
             let stdout = std::io::stdout();
             wrapper::forward_output(reader, stdout.lock())?;
 
             let status = shell.child.wait().context("could not wait for shell")?;
+            resize_guard.stop()?;
             let exit_code = u8::try_from(status.exit_code()).unwrap_or(1);
             Ok(std::process::ExitCode::from(exit_code))
         }
