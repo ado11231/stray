@@ -6,7 +6,33 @@ use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
+use std::sync::mpsc::SyncSender;
 use std::thread::{self, JoinHandle};
+
+enum SessionEvent {
+    Output(Vec<u8>),
+    InputFinished(Result<()>),
+    OutputFinished(Result<()>),
+}
+
+struct OutputSender {
+    events: SyncSender<SessionEvent>,
+}
+
+impl Write for OutputSender {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.events
+            .send(SessionEvent::Output(buffer.to_vec()))
+            .map_err(|_| std::io::Error::new(ErrorKind::BrokenPipe, "session has ended"))?;
+
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // The main thread flushes the terminal after receiving each output event.
+        Ok(())
+    }
+}
 
 /// Stops and collects the shell when session leaves scope.
 pub struct ShellGuard {
@@ -226,12 +252,123 @@ pub fn start_input_thread(writer: impl Write + Send + 'static) -> Result<JoinHan
         .context("could not start keyboard input thread")
 }
 
+fn start_output_thread(
+    reader: impl Read + Send + 'static,
+    events: SyncSender<SessionEvent>,
+) -> Result<JoinHandle<()>> {
+    thread::Builder::new()
+        .name("shell-output".into())
+        .spawn(move || {
+            let writer = OutputSender {
+                events: events.clone(),
+            };
+            let result = forward_output(reader, writer);
+
+            // A closed receiver means the session has already ended.
+            let _ = events.send(SessionEvent::OutputFinished(result));
+        })
+        .context("could not start shell output thread")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn output_thread_preserves_bytes_before_reporting_completion() {
+        let expected: Vec<u8> = (0..=255).cycle().take(25_000).collect();
+        let reader = io::Cursor::new(expected.clone());
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let thread = start_output_thread(reader, sender).expect("output thread should start");
+        let mut received = Vec::new();
+
+        loop {
+            let event = receiver
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("output thread should report an event");
+            match event {
+                SessionEvent::Output(bytes) => received.extend_from_slice(&bytes),
+                SessionEvent::OutputFinished(result) => {
+                    result.expect("output should finish successfully");
+                    break;
+                }
+                SessionEvent::InputFinished(_) => panic!("output thread sent an input event"),
+            }
+        }
+
+        thread.join().expect("output thread should not panic");
+        assert_eq!(received, expected);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn output_thread_reports_read_errors() {
+        struct FailingReader;
+
+        impl Read for FailingReader {
+            fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "test read failure",
+                ))
+            }
+        }
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let thread =
+            start_output_thread(FailingReader, sender).expect("output thread should start");
+        let event = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("output thread should report the failure");
+
+        match event {
+            SessionEvent::OutputFinished(Err(error)) => {
+                assert_eq!(error.to_string(), "could not read shell output");
+                assert_eq!(
+                    error.downcast_ref::<io::Error>().unwrap().kind(),
+                    ErrorKind::PermissionDenied
+                );
+            }
+            _ => panic!("expected a failed output completion event"),
+        }
+        thread.join().expect("output thread should not panic");
+    }
+
+    #[test]
+    fn output_sender_reports_a_closed_receiver() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let mut writer = OutputSender { events: sender };
+        drop(receiver);
+
+        let error = writer
+            .write(b"shell> ")
+            .expect_err("closed queue should fail");
+
+        assert_eq!(error.kind(), ErrorKind::BrokenPipe);
+        assert_eq!(error.to_string(), "session has ended");
+    }
+
+    #[test]
+    fn output_thread_exits_when_the_receiver_closes() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let reader = io::Cursor::new(vec![b'x'; 25_000]);
+        let thread = start_output_thread(reader, sender).expect("output thread should start");
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("first output event should arrive");
+
+        drop(receiver);
+
+        thread
+            .join()
+            .expect("closing the queue should stop output cleanly");
+    }
 
     fn run_in_test_terminal(test_name: &str) -> bool {
         const CHILD_TEST: &str = "STRAY_TEST_SHELL_SESSION";
