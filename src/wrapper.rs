@@ -3,6 +3,8 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtyPair, PtySize, native_pt
 use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
 use std::thread::{self, JoinHandle};
+use signal_hook::iterator::{Handle, Signals};
+use crate::terminal;
 
 /// Stops and collects the shell when session leaves scope.
 pub struct ShellGuard {
@@ -18,6 +20,32 @@ impl Drop for ShellGuard {
         // Stops the shell, then collects exit status.
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+pub struct ResizeGuard {
+    signal_handle: Handle,
+    thread: Option<JoinHandle<Result<()>>>,
+}
+
+impl ResizeGuard {
+    pub fn stop(&mut self) -> Result<()> {
+        self.signal_handle.close();
+
+        if let Some(thread) = self.thread.take() {
+            thread
+                .join()
+                .map_err(|_| anyhow::anyhow!("resize thread panicked"))??;
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for ResizeGuard {
+    fn drop(&mut self) {
+        // Cleanup must not panic while another error is being handled.
+        let _ = self.stop();
     }
 }
 
@@ -45,6 +73,31 @@ pub fn open_pty(size: PtySize) -> Result<PtyPair> {
 /// Updates the shels terminal size and notifies its foreground program.
 pub fn resize_pty(master: &dyn MasterPty, size: PtySize) -> Result<()> {
     master.resize(size).context("could not resize PTY")
+}
+
+/// Forwards window size changes while the main thread handles shell output.
+pub fn start_resize_thread(
+    master: Box<dyn MasterPty + Send>,
+    mut signals: Signals,
+) -> Result<ResizeGuard> {
+    let signal_handle = signals.handle();
+
+    let thread = thread::Builder::new()
+        .name("terminal-resize".into())
+        .spawn(move || {
+            for _ in signals.forever() {
+                let size = terminal::read_size()?;
+                resize_pty(master.as_ref(), size)?;
+            }
+
+            Ok(())
+        })
+        .context("could not start resize thread")?;
+
+    Ok(ResizeGuard {
+        signal_handle,
+        thread: Some(thread),
+    })
 }
 
 /// Starts the shell on the shell's side of the PTY.
@@ -101,6 +154,85 @@ mod tests {
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn resize_thread_stops_without_a_signal_and_can_stop_twice() {
+        let pty = open_pty(PtySize::default()).expect("PTY should open");
+        // No subscriptions keep this test separate from other signal tests.
+        let signals = Signals::new([] as [i32; 0]).expect("listener should open");
+        let signal_handle = signals.handle();
+        let mut guard =
+            start_resize_thread(pty.master, signals).expect("resize thread should start");
+
+        guard.stop().expect("resize thread should stop");
+
+        assert!(signal_handle.is_closed());
+        assert!(guard.thread.is_none());
+        guard.stop().expect("stopping twice should be safe");
+    }
+
+    #[test]
+    fn resize_guard_drop_closes_listener_and_waits_for_thread() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let mut signals = Signals::new([] as [i32; 0]).expect("listener should open");
+        let signal_handle = signals.handle();
+        let finished = Arc::new(AtomicBool::new(false));
+        let thread_finished = Arc::clone(&finished);
+        let thread = thread::spawn(move || {
+            for _ in signals.forever() {}
+            thread_finished.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        let guard = ResizeGuard {
+            signal_handle: signal_handle.clone(),
+            thread: Some(thread),
+        };
+
+        drop(guard);
+
+        assert!(signal_handle.is_closed());
+        assert!(finished.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn resize_guard_stop_returns_thread_error() {
+        let signals = Signals::new([] as [i32; 0]).expect("listener should open");
+        let thread =
+            thread::spawn(|| Err(io::Error::new(ErrorKind::BrokenPipe, "PTY closed").into()));
+        let mut guard = ResizeGuard {
+            signal_handle: signals.handle(),
+            thread: Some(thread),
+        };
+
+        let error = guard.stop().expect_err("thread error should reach caller");
+
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            ErrorKind::BrokenPipe
+        );
+        assert!(guard.signal_handle.is_closed());
+        assert!(guard.thread.is_none());
+        guard.stop().expect("cleanup after an error should be safe");
+    }
+
+    #[test]
+    fn resize_guard_stop_reports_thread_panic() {
+        let signals = Signals::new([] as [i32; 0]).expect("listener should open");
+        let thread = thread::spawn(|| panic!("test resize thread panic"));
+        let mut guard = ResizeGuard {
+            signal_handle: signals.handle(),
+            thread: Some(thread),
+        };
+
+        let error = guard
+            .stop()
+            .expect_err("thread panic should become an error");
+
+        assert_eq!(error.to_string(), "resize thread panicked");
+        assert!(guard.thread.is_none());
+        guard.stop().expect("cleanup after a panic should be safe");
+    }
 
     #[derive(Clone, Debug)]
     struct TestChild {
