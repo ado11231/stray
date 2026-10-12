@@ -4,6 +4,8 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtyPair, PtySize, native_pt
 use signal_hook::iterator::{Handle, Signals};
 use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
+use std::os::unix::process::CommandExt;
+use std::process::{Command, ExitCode};
 use std::thread::{self, JoinHandle};
 
 /// Stops and collects the shell when session leaves scope.
@@ -61,6 +63,19 @@ pub fn build_shell_command(shell_path: &OsStr, login: bool) -> CommandBuilder {
     }
 
     command
+}
+
+/// Replaces stray with the shell on the existing terminal.
+pub fn run_shell_directly(shell_path: &OsStr, login: bool) -> Result<ExitCode> {
+    let mut command = Command::new(shell_path);
+    command.arg("-i");
+
+    if login {
+        command.arg("-l");
+    }
+
+    let error = command.exec();
+    Err(error).context("could not start shell directly")
 }
 
 /// Opens terminal pair that Stray and shell will use.
@@ -154,6 +169,43 @@ mod tests {
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn direct_shell_failure_preserves_the_os_error() {
+        // Even a failed exec changes signal handling, so isolate it from other tests.
+        const CHILD_TEST: &str = "STRAY_TEST_DIRECT_SHELL_FAILURE";
+        if std::env::var_os(CHILD_TEST).is_none() {
+            let output = Command::new(std::env::current_exe().expect("test path should exist"))
+                .args([
+                    "--exact",
+                    "wrapper::tests::direct_shell_failure_preserves_the_os_error",
+                    "--nocapture",
+                ])
+                .env(CHILD_TEST, "1")
+                .output()
+                .expect("isolated test should start");
+
+            assert!(
+                output.status.success(),
+                "isolated test failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        for login in [false, true] {
+            // This path cannot be executable because /dev/null is a file.
+            let error = run_shell_directly(OsStr::new("/dev/null/stray-shell"), login)
+                .expect_err("invalid shell path should fail");
+
+            assert_eq!(error.to_string(), "could not start shell directly");
+            assert_eq!(
+                error.downcast_ref::<io::Error>().unwrap().kind(),
+                ErrorKind::NotADirectory
+            );
+        }
+    }
 
     #[test]
     fn resize_thread_stops_without_a_signal_and_can_stop_twice() {
