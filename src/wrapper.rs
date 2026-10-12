@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use portable_pty::{Child, CommandBuilder, PtyPair, PtySize, native_pty_system};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtyPair, PtySize, native_pty_system};
 use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
 use std::thread::{self, JoinHandle};
@@ -40,6 +40,11 @@ pub fn open_pty(size: PtySize) -> Result<PtyPair> {
     native_pty_system()
         .openpty(size)
         .context("could not open PTY")
+}
+
+/// Updates the shels terminal size and notifies its foreground program.
+pub fn resize_pty(master: &dyn MasterPty, size: PtySize) -> Result<()> {
+    master.resize(size).context("could not resize PTY")
 }
 
 /// Starts the shell on the shell's side of the PTY.
@@ -309,6 +314,28 @@ mod tests {
 
             // Read the size from a real PTY to check what the OS received.
             let pty = open_pty(size).expect("PTY should open");
+            let actual_size = pty.master.get_size().expect("PTY size should be readable");
+
+            assert_eq!(actual_size.rows, rows);
+            assert_eq!(actual_size.cols, cols);
+            assert_eq!(actual_size.pixel_width, 0);
+            assert_eq!(actual_size.pixel_height, 0);
+        }
+    }
+
+    #[test]
+    fn pty_resizes_larger_and_smaller() {
+        let pty = open_pty(PtySize::default()).expect("PTY should open");
+
+        for (rows, cols) in [(40, 120), (10, 30), (24, 80)] {
+            let size = PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+
+            resize_pty(pty.master.as_ref(), size).expect("PTY should resize");
             let actual_size = pty.master.get_size().expect("PTY size should be readable");
 
             assert_eq!(actual_size.rows, rows);
