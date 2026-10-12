@@ -51,6 +51,48 @@ impl Drop for ResizeGuard {
     }
 }
 
+pub struct ShellSession {
+    shell: ShellGuard,
+    master: Box<dyn MasterPty + Send>,
+    reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+    signals: Signals,
+    _raw_mode: terminal::RawModeGuard,
+}
+
+impl ShellSession {
+    pub fn start(command: CommandBuilder) -> Result<Self> {
+        let signals = terminal::watch_resize()?;
+        let size = terminal::read_size()?;
+        let pty = open_pty(size)?;
+
+        let reader = pty
+            .master
+            .try_clone_reader()
+            .context("could not open PTY reader")?;
+
+        let writer = pty
+            .master
+            .take_writer()
+            .context("could not open PTY writer")?;
+
+        let raw_mode = terminal::RawModeGuard::enable()?;
+
+        let shell = ShellGuard {
+            child: spawn_shell(&pty, command)?,
+        };
+        drop(pty.slave);
+
+        Ok(Self {
+            shell,
+            master: pty.master,
+            reader,
+            writer,
+            signals,
+            _raw_mode: raw_mode,
+        })
+    }
+}
 /// Prepares the shell command without starting a process.
 pub fn build_shell_command(shell_path: &OsStr, login: bool) -> CommandBuilder {
     let mut command = CommandBuilder::new(shell_path);
@@ -169,6 +211,114 @@ mod tests {
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    fn run_in_test_terminal(test_name: &str) -> bool {
+        const CHILD_TEST: &str = "STRAY_TEST_SHELL_SESSION";
+        if std::env::var(CHILD_TEST).as_deref() == Ok(test_name) {
+            return false;
+        }
+
+        let pty = open_pty(PtySize::default()).expect("test terminal should open");
+        let reader = pty.master.try_clone_reader().expect("reader should open");
+        let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
+        command.args(["--exact", test_name, "--nocapture"]);
+        command.env(CHILD_TEST, test_name);
+        let mut child = ShellGuard {
+            child: spawn_shell(&pty, command).expect("isolated test should start"),
+        };
+        drop(pty.slave);
+        let output_thread = thread::spawn(move || {
+            let mut output = Vec::new();
+            forward_output(reader, &mut output).expect("test output should be readable");
+            output
+        });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.child.try_wait().expect("test should be waitable") {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "isolated test timed out"
+            );
+            thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let output = output_thread.join().expect("output thread should finish");
+        assert!(
+            status.success(),
+            "isolated test failed: {}",
+            String::from_utf8_lossy(&output)
+        );
+        true
+    }
+
+    fn terminal_settings() -> Vec<String> {
+        let output = Command::new("/bin/stty")
+            .arg("-a")
+            .stdin(std::process::Stdio::inherit())
+            .output()
+            .expect("stty should start");
+        assert!(
+            output.status.success(),
+            "terminal settings should be readable"
+        );
+        // PENDIN tracks pending input retyping and can change when raw mode ends.
+        String::from_utf8(output.stdout)
+            .expect("stty output should be text")
+            .split_whitespace()
+            .filter(|word| !matches!(word.trim_end_matches(';'), "pendin" | "-pendin"))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn session_start_restores_terminal_after_spawn_failure() {
+        if run_in_test_terminal(
+            "wrapper::tests::session_start_restores_terminal_after_spawn_failure",
+        ) {
+            return;
+        }
+        let before = terminal_settings();
+        assert!(!crossterm::terminal::is_raw_mode_enabled().unwrap());
+
+        let error = match ShellSession::start(CommandBuilder::new("/dev/null/stray-shell")) {
+            Ok(_) => panic!("invalid shell should not start"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.to_string(), "could not start shell");
+        assert!(!crossterm::terminal::is_raw_mode_enabled().unwrap());
+        assert_eq!(terminal_settings(), before);
+    }
+
+    #[test]
+    fn session_drop_restores_terminal_after_success() {
+        if run_in_test_terminal("wrapper::tests::session_drop_restores_terminal_after_success") {
+            return;
+        }
+        let before = terminal_settings();
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "exit 7"]);
+
+        let mut session = ShellSession::start(command).expect("session should start");
+
+        assert!(crossterm::terminal::is_raw_mode_enabled().unwrap());
+        assert_ne!(terminal_settings(), before);
+        let size = session
+            .master
+            .get_size()
+            .expect("PTY size should be readable");
+        let expected = PtySize::default();
+        assert_eq!((size.rows, size.cols), (expected.rows, expected.cols));
+        let status = session.shell.child.wait().expect("shell should exit");
+        assert_eq!(status.exit_code(), 7);
+
+        drop(session);
+
+        assert!(!crossterm::terminal::is_raw_mode_enabled().unwrap());
+        assert_eq!(terminal_settings(), before);
+    }
 
     #[test]
     fn direct_shell_failure_preserves_the_os_error() {
