@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use portable_pty::PtySize;
-use signal_hook::consts::SIGWINCH;
+use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGWINCH};
 use signal_hook::iterator::Signals;
 
 pub fn read_size() -> Result<PtySize> {
@@ -15,9 +15,10 @@ pub fn read_size() -> Result<PtySize> {
     })
 }
 
-/// Registers a listener for terminal window size changes.
-pub fn watch_resize() -> Result<Signals> {
-    Signals::new([SIGWINCH]).context("could not watch terminal resizes")
+/// Registers before raw mode so shutdown signals also take the cleanup path.
+pub fn watch_signals() -> Result<Signals> {
+    Signals::new([SIGWINCH, SIGHUP, SIGINT, SIGQUIT, SIGTERM])
+        .context("could not watch terminal signals")
 }
 
 /// Restores terminal mode when this value leaves scope.
@@ -44,7 +45,7 @@ mod tests {
 
     #[test]
     fn resize_listener_receives_window_size_signal() {
-        let mut signals = watch_resize().expect("resize listener should register");
+        let mut signals = watch_signals().expect("signal listener should register");
 
         signal_hook::low_level::raise(SIGWINCH).expect("resize signal should be sent");
 

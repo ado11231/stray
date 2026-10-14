@@ -41,7 +41,10 @@ fn main() -> std::process::ExitCode {
         Ok(code) => code,
         Err(error) => {
             eprintln!("stray: {}", error.to_string().replace(['\r', '\n'], " "));
-            std::process::ExitCode::FAILURE
+            match error.downcast_ref::<wrapper::TerminationSignal>() {
+                Some(signal) => std::process::ExitCode::from((128 + signal.0) as u8),
+                None => std::process::ExitCode::FAILURE,
+            }
         }
     }
 }

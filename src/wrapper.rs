@@ -14,7 +14,19 @@ enum SessionEvent {
     InputFinished(Result<()>),
     OutputFinished(Result<()>),
     ResizeFailed(anyhow::Error),
+    Terminated(i32),
 }
+
+#[derive(Debug)]
+pub struct TerminationSignal(pub i32);
+
+impl std::fmt::Display for TerminationSignal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "session stopped by signal {}", self.0)
+    }
+}
+
+impl std::error::Error for TerminationSignal {}
 
 /// Converts an unwinding panic into an error after the closure's guards are dropped.
 pub fn catch_panic<T>(message: &'static str, operation: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -95,7 +107,7 @@ pub struct ShellSession {
 
 impl ShellSession {
     pub fn start(command: CommandBuilder) -> Result<Self> {
-        let signals = terminal::watch_resize()?;
+        let signals = terminal::watch_signals()?;
         let size = terminal::read_size()?;
         let pty = open_pty(size)?;
 
@@ -188,7 +200,7 @@ pub fn resize_pty(master: &dyn MasterPty, size: PtySize) -> Result<()> {
     master.resize(size).context("could not resize PTY")
 }
 
-/// Forwards window size changes while the main thread handles shell output.
+/// Forwards window size changes and shutdown requests while the shell runs.
 fn start_resize_thread(
     mut resize: impl FnMut() -> Result<()> + Send + 'static,
     mut signals: Signals,
@@ -200,8 +212,13 @@ fn start_resize_thread(
         .name("terminal-resize".into())
         .spawn(move || {
             let result = catch_panic("resize thread panicked", || {
-                for _ in signals.forever() {
-                    resize()?;
+                for signal in signals.forever() {
+                    if signal == signal_hook::consts::SIGWINCH {
+                        resize()?;
+                    } else {
+                        let _ = events.send(SessionEvent::Terminated(signal));
+                        break;
+                    }
                 }
                 Ok(())
             });
@@ -294,6 +311,7 @@ fn forward_session_events(receiver: Receiver<SessionEvent>, mut output: impl Wri
                 return result;
             }
             SessionEvent::ResizeFailed(error) => return Err(error),
+            SessionEvent::Terminated(signal) => return Err(TerminationSignal(signal).into()),
         }
     }
 }
@@ -343,6 +361,83 @@ mod tests {
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn typed_ctrl_c_reaches_the_inner_shell() {
+        if run_in_test_terminal("wrapper::tests::typed_ctrl_c_reaches_the_inner_shell") {
+            return;
+        }
+        let before = terminal_settings();
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "trap 'exit 7' INT; printf READY; read value"]);
+        let mut session = ShellSession::start(command).unwrap();
+        let mut ready = [0u8; 5];
+        session.reader.read_exact(&mut ready).unwrap();
+        assert_eq!(&ready, b"READY");
+
+        session.writer.write_all(b"\x03").unwrap();
+        session.writer.flush().unwrap();
+        let status = session.run().unwrap();
+
+        assert_eq!(status, ExitCode::from(7));
+        assert!(!crossterm::terminal::is_raw_mode_enabled().unwrap());
+        assert_eq!(terminal_settings(), before);
+    }
+
+    #[test]
+    fn termination_signals_stop_the_shell_and_restore_the_terminal() {
+        if run_in_test_terminal(
+            "wrapper::tests::termination_signals_stop_the_shell_and_restore_the_terminal",
+        ) {
+            return;
+        }
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+        let before = terminal_settings();
+
+        for signal in [SIGHUP, SIGINT, SIGQUIT, SIGTERM] {
+            let mut command = CommandBuilder::new("/bin/sh");
+            command.args(["-c", "read value"]);
+            let session = ShellSession::start(command).unwrap();
+            let shell_pid = session.shell.child.process_id().unwrap();
+            assert!(crossterm::terminal::is_raw_mode_enabled().unwrap());
+
+            // Queue the signal after registration, before the event loop starts.
+            signal_hook::low_level::raise(signal).unwrap();
+            let error = session.run().unwrap_err();
+
+            assert_eq!(error.downcast_ref::<TerminationSignal>().unwrap().0, signal);
+            assert!(!crossterm::terminal::is_raw_mode_enabled().unwrap());
+            assert_eq!(terminal_settings(), before);
+            let alive = Command::new("/bin/kill")
+                .args(["-0", &shell_pid.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(!alive.success(), "the shell must be stopped and collected");
+        }
+    }
+
+    #[test]
+    fn termination_closes_the_queue_before_worker_cleanup() {
+        let signal = signal_hook::consts::SIGTERM;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(2);
+        sender.send(SessionEvent::Terminated(signal)).unwrap();
+        sender
+            .send(SessionEvent::Output(b"too late".to_vec()))
+            .unwrap();
+        let mut output = Vec::new();
+
+        let error = forward_session_events(receiver, &mut output).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("session stopped by signal {signal}")
+        );
+        assert_eq!(error.downcast_ref::<TerminationSignal>().unwrap().0, signal);
+        assert!(output.is_empty());
+        assert!(sender.send(SessionEvent::Output(vec![])).is_err());
+    }
 
     #[test]
     fn panic_boundary_preserves_success_and_regular_errors() {
@@ -414,7 +509,7 @@ mod tests {
         if run_in_test_terminal("wrapper::tests::resize_panic_reports_failure_before_cleanup") {
             return;
         }
-        let signals = terminal::watch_resize().unwrap();
+        let signals = terminal::watch_signals().unwrap();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let mut guard =
             start_resize_thread(|| panic!("test resize panic"), signals, sender).unwrap();
@@ -568,6 +663,7 @@ mod tests {
                 }
                 SessionEvent::InputFinished(_) => panic!("output thread sent an input event"),
                 SessionEvent::ResizeFailed(_) => panic!("output thread sent a resize event"),
+                SessionEvent::Terminated(_) => panic!("output thread sent a termination event"),
             }
         }
 
@@ -813,7 +909,7 @@ mod tests {
         {
             return;
         }
-        let signals = terminal::watch_resize().unwrap();
+        let signals = terminal::watch_signals().unwrap();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let mut guard = start_resize_thread(
             || Err(io::Error::new(ErrorKind::BrokenPipe, "resize failed").into()),
@@ -846,7 +942,7 @@ mod tests {
         ) {
             return;
         }
-        let signals = terminal::watch_resize().unwrap();
+        let signals = terminal::watch_signals().unwrap();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         sender.send(SessionEvent::OutputFinished(Ok(()))).unwrap();
         let (attempted, attempts) = std::sync::mpsc::channel();
