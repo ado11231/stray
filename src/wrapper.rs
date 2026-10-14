@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
 enum SessionEvent {
@@ -127,29 +127,7 @@ impl ShellSession {
         let output_thread = start_output_thread(self.reader, sender)?;
 
         let stdout = std::io::stdout();
-        let mut output = stdout.lock();
-
-        loop {
-            let event = receiver
-                .recv()
-                .context("session event channel closed unexpectedly")?;
-
-            match event {
-                SessionEvent::Output(bytes) => {
-                    output
-                        .write_all(&bytes)
-                        .context("could not write shell output")?;
-                    output.flush().context("could not flush shell output")?;
-                }
-                SessionEvent::InputFinished(result) => {
-                    result?;
-                }
-                SessionEvent::OutputFinished(result) => {
-                    result?;
-                    break;
-                }
-            }
-        }
+        forward_session_events(receiver, stdout.lock())?;
 
         output_thread
             .join()
@@ -269,6 +247,31 @@ pub fn forward_input(mut reader: impl Read, mut writer: impl Write) -> Result<()
     std::io::copy(&mut reader, &mut writer).context("could not forward keyboard input")?;
     Ok(())
 }
+
+/// Handles session events until shell output ends or forwarding fails.
+fn forward_session_events(receiver: Receiver<SessionEvent>, mut output: impl Write) -> Result<()> {
+    loop {
+        let event = receiver
+            .recv()
+            .context("session event channel closed unexpectedly")?;
+
+        match event {
+            SessionEvent::Output(bytes) => {
+                output
+                    .write_all(&bytes)
+                    .context("could not write shell output")?;
+                output.flush().context("could not flush shell output")?;
+            }
+            SessionEvent::InputFinished(result) => {
+                result?;
+            }
+            SessionEvent::OutputFinished(result) => {
+                return result;
+            }
+        }
+    }
+}
+
 /// Forwards keys directly and reports when input forwarding ends.
 fn start_input_thread(
     writer: impl Write + Send + 'static,
@@ -310,6 +313,120 @@ mod tests {
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn session_events_flush_output_after_input_finishes() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(4);
+        sender
+            .send(SessionEvent::Output(b"first\n".to_vec()))
+            .unwrap();
+        sender.send(SessionEvent::InputFinished(Ok(()))).unwrap();
+        sender
+            .send(SessionEvent::Output(b"\x1b[32mshell> ".to_vec()))
+            .unwrap();
+        sender.send(SessionEvent::OutputFinished(Ok(()))).unwrap();
+        let mut bytes = Vec::new();
+        let mut output = BufWriter::new(&mut bytes);
+
+        forward_session_events(receiver, &mut output).unwrap();
+
+        assert!(
+            output.buffer().is_empty(),
+            "the final prompt must be flushed"
+        );
+        drop(output);
+        assert_eq!(bytes, b"first\n\x1b[32mshell> ");
+        assert!(sender.send(SessionEvent::Output(vec![])).is_err());
+    }
+
+    #[test]
+    fn session_events_return_worker_errors_and_close_the_receiver() {
+        for input_failed in [true, false] {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(3);
+            let failure = Err(io::Error::new(ErrorKind::PermissionDenied, "test failure").into());
+            let event = if input_failed {
+                SessionEvent::InputFinished(failure)
+            } else {
+                SessionEvent::OutputFinished(failure)
+            };
+            sender.send(event).unwrap();
+            sender
+                .send(SessionEvent::Output(b"too late".to_vec()))
+                .unwrap();
+            sender.send(SessionEvent::OutputFinished(Ok(()))).unwrap();
+            let mut output = Vec::new();
+
+            let error = forward_session_events(receiver, &mut output).unwrap_err();
+
+            assert_eq!(
+                error.downcast_ref::<io::Error>().unwrap().kind(),
+                ErrorKind::PermissionDenied
+            );
+            assert!(
+                output.is_empty(),
+                "output after the failure must not be written"
+            );
+            assert!(sender.send(SessionEvent::Output(vec![])).is_err());
+        }
+    }
+
+    #[test]
+    fn session_events_require_output_completion_before_disconnect() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send(SessionEvent::InputFinished(Ok(()))).unwrap();
+        drop(sender);
+
+        let error = forward_session_events(receiver, io::sink()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "session event channel closed unexpectedly"
+        );
+    }
+
+    #[test]
+    fn session_events_report_terminal_write_and_flush_failures() {
+        struct FailingWriter {
+            fail_on_flush: bool,
+        }
+
+        impl Write for FailingWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if self.fail_on_flush {
+                    Ok(bytes.len())
+                } else {
+                    Err(ErrorKind::BrokenPipe.into())
+                }
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Err(ErrorKind::BrokenPipe.into())
+            }
+        }
+
+        for fail_on_flush in [false, true] {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(2);
+            sender
+                .send(SessionEvent::Output(b"shell> ".to_vec()))
+                .unwrap();
+            sender.send(SessionEvent::OutputFinished(Ok(()))).unwrap();
+
+            let error =
+                forward_session_events(receiver, FailingWriter { fail_on_flush }).unwrap_err();
+
+            let expected = if fail_on_flush {
+                "could not flush shell output"
+            } else {
+                "could not write shell output"
+            };
+            assert_eq!(error.to_string(), expected);
+            assert_eq!(
+                error.downcast_ref::<io::Error>().unwrap().kind(),
+                ErrorKind::BrokenPipe
+            );
+            assert!(sender.send(SessionEvent::Output(vec![])).is_err());
+        }
+    }
 
     #[test]
     fn output_thread_preserves_bytes_before_reporting_completion() {
