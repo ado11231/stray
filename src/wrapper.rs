@@ -13,6 +13,7 @@ enum SessionEvent {
     Output(Vec<u8>),
     InputFinished(Result<()>),
     OutputFinished(Result<()>),
+    ResizeFailed(anyhow::Error),
 }
 
 struct OutputSender {
@@ -120,18 +121,14 @@ impl ShellSession {
     }
 
     pub fn run(mut self) -> Result<ExitCode> {
-        let mut resize_guard = start_resize_thread(self.master, self.signals)?;
         let (sender, receiver) = std::sync::mpsc::sync_channel(16);
+        let mut resize_guard = start_resize_thread(
+            move || resize_pty(self.master.as_ref(), terminal::read_size()?),
+            self.signals,
+            sender.clone(),
+        )?;
 
-        let _input_thread = start_input_thread(self.writer, sender.clone())?;
-        let output_thread = start_output_thread(self.reader, sender)?;
-
-        let stdout = std::io::stdout();
-        forward_session_events(receiver, stdout.lock())?;
-
-        output_thread
-            .join()
-            .map_err(|_| anyhow::anyhow!("shell output thread panicked"))?;
+        forward_session(self.reader, self.writer, sender, receiver)?;
 
         let status = self
             .shell
@@ -186,9 +183,10 @@ pub fn resize_pty(master: &dyn MasterPty, size: PtySize) -> Result<()> {
 }
 
 /// Forwards window size changes while the main thread handles shell output.
-pub fn start_resize_thread(
-    master: Box<dyn MasterPty + Send>,
+fn start_resize_thread(
+    mut resize: impl FnMut() -> Result<()> + Send + 'static,
     mut signals: Signals,
+    events: SyncSender<SessionEvent>,
 ) -> Result<ResizeGuard> {
     let signal_handle = signals.handle();
 
@@ -196,8 +194,10 @@ pub fn start_resize_thread(
         .name("terminal-resize".into())
         .spawn(move || {
             for _ in signals.forever() {
-                let size = terminal::read_size()?;
-                resize_pty(master.as_ref(), size)?;
+                if let Err(error) = resize() {
+                    let _ = events.send(SessionEvent::ResizeFailed(error));
+                    break;
+                }
             }
 
             Ok(())
@@ -248,7 +248,23 @@ pub fn forward_input(mut reader: impl Read, mut writer: impl Write) -> Result<()
     Ok(())
 }
 
-/// Handles session events until shell output ends or forwarding fails.
+fn forward_session(
+    reader: impl Read + Send + 'static,
+    writer: impl Write + Send + 'static,
+    sender: SyncSender<SessionEvent>,
+    receiver: Receiver<SessionEvent>,
+) -> Result<()> {
+    // Owning the receiver here closes the queue before resize cleanup on any error.
+    let _input_thread = start_input_thread(writer, sender.clone())?;
+    let output_thread = start_output_thread(reader, sender)?;
+    let stdout = std::io::stdout();
+    forward_session_events(receiver, stdout.lock())?;
+    output_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("shell output thread panicked"))
+}
+
+/// Handles session events until shell output ends or a worker fails.
 fn forward_session_events(receiver: Receiver<SessionEvent>, mut output: impl Write) -> Result<()> {
     loop {
         let event = receiver
@@ -268,6 +284,7 @@ fn forward_session_events(receiver: Receiver<SessionEvent>, mut output: impl Wri
             SessionEvent::OutputFinished(result) => {
                 return result;
             }
+            SessionEvent::ResizeFailed(error) => return Err(error),
         }
     }
 }
@@ -341,13 +358,13 @@ mod tests {
 
     #[test]
     fn session_events_return_worker_errors_and_close_the_receiver() {
-        for input_failed in [true, false] {
+        for worker in ["input", "output", "resize"] {
             let (sender, receiver) = std::sync::mpsc::sync_channel(3);
-            let failure = Err(io::Error::new(ErrorKind::PermissionDenied, "test failure").into());
-            let event = if input_failed {
-                SessionEvent::InputFinished(failure)
-            } else {
-                SessionEvent::OutputFinished(failure)
+            let error = io::Error::new(ErrorKind::PermissionDenied, "test failure").into();
+            let event = match worker {
+                "input" => SessionEvent::InputFinished(Err(error)),
+                "output" => SessionEvent::OutputFinished(Err(error)),
+                _ => SessionEvent::ResizeFailed(error),
             };
             sender.send(event).unwrap();
             sender
@@ -447,6 +464,7 @@ mod tests {
                     break;
                 }
                 SessionEvent::InputFinished(_) => panic!("output thread sent an input event"),
+                SessionEvent::ResizeFailed(_) => panic!("output thread sent a resize event"),
             }
         }
 
@@ -668,18 +686,86 @@ mod tests {
 
     #[test]
     fn resize_thread_stops_without_a_signal_and_can_stop_twice() {
-        let pty = open_pty(PtySize::default()).expect("PTY should open");
         // No subscriptions keep this test separate from other signal tests.
         let signals = Signals::new([] as [i32; 0]).expect("listener should open");
         let signal_handle = signals.handle();
-        let mut guard =
-            start_resize_thread(pty.master, signals).expect("resize thread should start");
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let mut guard = start_resize_thread(|| panic!("unexpected resize"), signals, sender)
+            .expect("resize thread should start");
 
         guard.stop().expect("resize thread should stop");
 
         assert!(signal_handle.is_closed());
         assert!(guard.thread.is_none());
         guard.stop().expect("stopping twice should be safe");
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn resize_failure_reaches_the_session_before_cleanup() {
+        if run_in_test_terminal("wrapper::tests::resize_failure_reaches_the_session_before_cleanup")
+        {
+            return;
+        }
+        let signals = terminal::watch_resize().unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let mut guard = start_resize_thread(
+            || Err(io::Error::new(ErrorKind::BrokenPipe, "resize failed").into()),
+            signals,
+            sender,
+        )
+        .unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGWINCH).unwrap();
+
+        let event = receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+
+        match event {
+            SessionEvent::ResizeFailed(error) => {
+                assert_eq!(
+                    error.downcast_ref::<io::Error>().unwrap().kind(),
+                    ErrorKind::BrokenPipe
+                );
+            }
+            _ => panic!("expected a resize failure"),
+        }
+        guard.stop().unwrap();
+    }
+
+    #[test]
+    fn closing_the_session_releases_a_resize_worker_with_a_full_queue() {
+        if run_in_test_terminal(
+            "wrapper::tests::closing_the_session_releases_a_resize_worker_with_a_full_queue",
+        ) {
+            return;
+        }
+        let signals = terminal::watch_resize().unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send(SessionEvent::OutputFinished(Ok(()))).unwrap();
+        let (attempted, attempts) = std::sync::mpsc::channel();
+        let mut guard = start_resize_thread(
+            move || {
+                attempted.send(()).unwrap();
+                Err(anyhow::anyhow!("resize failed"))
+            },
+            signals,
+            sender,
+        )
+        .unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGWINCH).unwrap();
+        attempts
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+
+        forward_session_events(receiver, io::sink()).unwrap();
+        guard.stop().unwrap();
+
+        assert!(guard.thread.is_none());
+        assert!(guard.signal_handle.is_closed());
     }
 
     #[test]
