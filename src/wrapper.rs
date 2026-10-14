@@ -121,11 +121,39 @@ impl ShellSession {
 
     pub fn run(mut self) -> Result<ExitCode> {
         let mut resize_guard = start_resize_thread(self.master, self.signals)?;
-        let _input_thread = start_input_thread(self.writer)?;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(16);
+
+        let _input_thread = start_input_thread(self.writer, sender.clone())?;
+        let output_thread = start_output_thread(self.reader, sender)?;
 
         let stdout = std::io::stdout();
+        let mut output = stdout.lock();
 
-        forward_output(self.reader, stdout.lock())?;
+        loop {
+            let event = receiver
+                .recv()
+                .context("session event channel closed unexpectedly")?;
+
+            match event {
+                SessionEvent::Output(bytes) => {
+                    output
+                        .write_all(&bytes)
+                        .context("could not write shell output")?;
+                    output.flush().context("could not flush shell output")?;
+                }
+                SessionEvent::InputFinished(result) => {
+                    result?;
+                }
+                SessionEvent::OutputFinished(result) => {
+                    result?;
+                    break;
+                }
+            }
+        }
+
+        output_thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("shell output thread panicked"))?;
 
         let status = self
             .shell
@@ -241,13 +269,19 @@ pub fn forward_input(mut reader: impl Read, mut writer: impl Write) -> Result<()
     std::io::copy(&mut reader, &mut writer).context("could not forward keyboard input")?;
     Ok(())
 }
-/// Forwards keyboard input while the main thread handles output.
-pub fn start_input_thread(writer: impl Write + Send + 'static) -> Result<JoinHandle<Result<()>>> {
+/// Forwards keys directly and reports when input forwarding ends.
+fn start_input_thread(
+    writer: impl Write + Send + 'static,
+    events: SyncSender<SessionEvent>,
+) -> Result<JoinHandle<()>> {
     thread::Builder::new()
         .name("keyboard-input".into())
         .spawn(move || {
             let stdin = std::io::stdin();
-            forward_input(stdin.lock(), writer)
+            let result = forward_input(stdin.lock(), writer);
+
+            // A closed receiver means the session has already ended.
+            let _ = events.send(SessionEvent::InputFinished(result));
         })
         .context("could not start keyboard input thread")
 }
