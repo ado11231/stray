@@ -1,3 +1,4 @@
+mod shell;
 mod terminal;
 mod wrapper;
 
@@ -20,6 +21,8 @@ enum Command {
     Start {
         #[arg(long)]
         login: bool,
+        #[arg(long)]
+        shell: Option<std::ffi::OsString>,
     },
     #[command(hide = true)]
     Init {
@@ -53,8 +56,10 @@ fn run(cli: Cli) -> Result<std::process::ExitCode> {
     match cli.command {
         Command::Install => bail!("install is not built yet"),
         Command::Uninstall => bail!("uninstall is not built yet"),
-        Command::Start { login } => {
-            let shell_path = std::env::var_os("SHELL").context("SHELL is not set")?;
+        Command::Start { login, shell } => {
+            let shell_path = shell
+                .or_else(|| std::env::var_os("SHELL"))
+                .context("SHELL is not set")?;
             let command = wrapper::build_shell_command(&shell_path, login);
 
             match wrapper::ShellSession::start(command) {
@@ -65,7 +70,17 @@ fn run(cli: Cli) -> Result<std::process::ExitCode> {
                 }
             }
         }
-        Command::Init { shell: _ } => bail!("init is not built yet"),
+        Command::Init { shell } => {
+            let executable = std::env::current_exe().context("could not locate stray")?;
+            let executable = executable
+                .to_str()
+                .context("stray path is not valid UTF-8")?;
+            use std::io::Write;
+            std::io::stdout()
+                .lock()
+                .write_all(shell::init_script(shell, executable).as_bytes())?;
+            Ok(std::process::ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -89,14 +104,27 @@ mod tests {
 
         assert!(matches!(install.command, Command::Install));
         assert!(matches!(uninstall.command, Command::Uninstall));
-        assert!(matches!(start.command, Command::Start { login: false }));
+        assert!(matches!(start.command, Command::Start { login: false, .. }));
+    }
+
+    #[test]
+    fn start_accepts_an_explicit_shell_path() {
+        let cli =
+            Cli::try_parse_from(["stray", "start", "--shell", "/tmp/my shell", "--login"]).unwrap();
+        match cli.command {
+            Command::Start {
+                shell: Some(path),
+                login: true,
+            } => assert_eq!(path, "/tmp/my shell"),
+            _ => panic!("expected a login shell with an explicit path"),
+        }
     }
 
     #[test]
     fn start_accepts_login_flag() {
         let cli = Cli::try_parse_from(["stray", "start", "--login"]).unwrap();
 
-        assert!(matches!(cli.command, Command::Start { login: true }));
+        assert!(matches!(cli.command, Command::Start { login: true, .. }));
     }
 
     #[test]
