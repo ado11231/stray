@@ -28,7 +28,7 @@ impl TestShell {
         let path = directory.join("test-shell");
         std::fs::write(
             &path,
-            "#!/bin/sh\nprintf 'arg:%s\\n' \"$@\"\nIFS= read -r input\nprintf 'input:%s\\nenv:%s\\n' \"$input\" \"$STRAY_TEST_VALUE\"\nexit 7\n",
+            "#!/bin/sh\nprintf 'arg:%s\\n' \"$@\"\nIFS= read -r input\nprintf 'input:%s\\nenv:%s\\nmark:%s\\n' \"$input\" \"$STRAY_TEST_VALUE\" \"${STRAY_TTY-unset}\"\nexit 7\n",
         )
         .expect("test shell should be written");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
@@ -50,6 +50,7 @@ fn run_without_terminal(shell: &Path, login: bool, input_bytes: &[u8]) -> Output
         .arg("start")
         .env("SHELL", shell)
         .env("STRAY_TEST_VALUE", "inherited")
+        .env("STRAY_TTY", "/dev/stale-terminal")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -91,7 +92,7 @@ fn setup_failure_runs_direct_shell_with_original_options_and_streams() {
         assert_eq!(output.status.code(), Some(7), "{stderr}");
         assert_eq!(
             stdout,
-            format!("{arguments}input:hello shell\nenv:inherited\n")
+            format!("{arguments}input:hello shell\nenv:inherited\nmark:unset\n")
         );
         assert!(stderr.contains("starting shell directly"), "{stderr}");
         assert_eq!(stderr.lines().count(), 1, "{stderr}");

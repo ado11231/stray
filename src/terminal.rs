@@ -2,6 +2,20 @@ use anyhow::{Context, Result};
 use portable_pty::PtySize;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGWINCH};
 use signal_hook::iterator::Signals;
+use std::ffi::{CStr, OsString};
+use std::os::unix::ffi::OsStrExt;
+
+/// Reads stdin's terminal name without depending on shell variables or PATH.
+pub fn tty_name() -> Option<OsString> {
+    let mut buffer = [0 as libc::c_char; 1024];
+    // The buffer is writable, and ttyname_r includes a null terminator on success.
+    let result = unsafe { libc::ttyname_r(libc::STDIN_FILENO, buffer.as_mut_ptr(), buffer.len()) };
+    if result != 0 {
+        return None;
+    }
+    let name = unsafe { CStr::from_ptr(buffer.as_ptr()) };
+    Some(std::ffi::OsStr::from_bytes(name.to_bytes()).to_owned())
+}
 
 pub fn read_size() -> Result<PtySize> {
     let (columns, rows) = crossterm::terminal::size().context("could not read terminal size")?;

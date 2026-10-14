@@ -9,6 +9,8 @@ use std::process::{Command, ExitCode};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
+pub const SHELL_MARKER: &str = "STRAY_TTY";
+
 enum SessionEvent {
     Output(Vec<u8>),
     InputFinished(Result<()>),
@@ -106,10 +108,15 @@ pub struct ShellSession {
 }
 
 impl ShellSession {
-    pub fn start(command: CommandBuilder) -> Result<Self> {
+    pub fn start(mut command: CommandBuilder) -> Result<Self> {
         let signals = terminal::watch_signals()?;
         let size = terminal::read_size()?;
         let pty = open_pty(size)?;
+        let tty_name = pty
+            .master
+            .tty_name()
+            .context("could not read shell PTY name")?;
+        command.env(SHELL_MARKER, tty_name);
 
         let reader = pty
             .master
@@ -177,6 +184,11 @@ pub fn build_shell_command(shell_path: &OsStr, login: bool) -> CommandBuilder {
 
 /// Replaces stray with the shell on the existing terminal.
 pub fn run_shell_directly(shell_path: &OsStr, login: bool) -> Result<ExitCode> {
+    let error = build_direct_shell_command(shell_path, login).exec();
+    Err(error).context("could not start shell directly")
+}
+
+fn build_direct_shell_command(shell_path: &OsStr, login: bool) -> Command {
     let mut command = Command::new(shell_path);
     command.arg("-i");
 
@@ -184,8 +196,13 @@ pub fn run_shell_directly(shell_path: &OsStr, login: bool) -> Result<ExitCode> {
         command.arg("-l");
     }
 
-    let error = command.exec();
-    Err(error).context("could not start shell directly")
+    if let Some(tty_name) = terminal::tty_name() {
+        command.env(SHELL_MARKER, tty_name);
+    } else {
+        command.env_remove(SHELL_MARKER);
+    }
+
+    command
 }
 
 /// Opens terminal pair that Stray and shell will use.
@@ -361,6 +378,53 @@ mod tests {
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn session_marker_matches_the_inner_terminal_and_replaces_a_stale_marker() {
+        if run_in_test_terminal(
+            "wrapper::tests::session_marker_matches_the_inner_terminal_and_replaces_a_stale_marker",
+        ) {
+            return;
+        }
+        let outer_terminal = terminal::tty_name().unwrap();
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "printf '%s\\n' \"$STRAY_TTY\"; /usr/bin/tty"]);
+        command.env(SHELL_MARKER, "/dev/stale-terminal");
+        let mut session = ShellSession::start(command).unwrap();
+        let inner_terminal = session.master.tty_name().unwrap();
+        let mut output = Vec::new();
+
+        forward_output(&mut session.reader, &mut output).unwrap();
+        let status = session.shell.child.wait().unwrap();
+        drop(session);
+
+        assert!(status.success());
+        assert_ne!(inner_terminal.as_os_str(), outer_terminal);
+        let text = String::from_utf8(output).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines, vec![inner_terminal.to_str().unwrap(); 2]);
+        assert_eq!(terminal::tty_name().unwrap(), outer_terminal);
+    }
+
+    #[test]
+    fn direct_shell_marker_matches_the_existing_terminal() {
+        if run_in_test_terminal("wrapper::tests::direct_shell_marker_matches_the_existing_terminal")
+        {
+            return;
+        }
+        let terminal_name = terminal::tty_name().unwrap();
+        let mut command = build_direct_shell_command(OsStr::new("/bin/sh"), false);
+        command.args(["-c", "printf '%s\\n' \"$STRAY_TTY\"; /usr/bin/tty"]);
+        command.env("ENV", "/dev/null");
+        command.stdin(std::process::Stdio::inherit());
+
+        let output = command.output().unwrap();
+
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines, vec![terminal_name.to_str().unwrap(); 2]);
+    }
 
     #[test]
     fn typed_ctrl_c_reaches_the_inner_shell() {
