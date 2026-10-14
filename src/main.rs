@@ -1,8 +1,9 @@
+mod install;
 mod shell;
 mod terminal;
 mod wrapper;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -54,8 +55,10 @@ fn main() -> std::process::ExitCode {
 
 fn run(cli: Cli) -> Result<std::process::ExitCode> {
     match cli.command {
-        Command::Install => bail!("install is not built yet"),
-        Command::Uninstall => bail!("uninstall is not built yet"),
+        Command::Install | Command::Uninstall => {
+            install::run(matches!(cli.command, Command::Install))?;
+            Ok(std::process::ExitCode::SUCCESS)
+        }
         Command::Start { login, shell } => {
             let shell_path = shell
                 .or_else(|| std::env::var_os("SHELL"))
