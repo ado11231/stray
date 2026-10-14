@@ -16,6 +16,12 @@ enum SessionEvent {
     ResizeFailed(anyhow::Error),
 }
 
+/// Converts an unwinding panic into an error after the closure's guards are dropped.
+pub fn catch_panic<T>(message: &'static str, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
+        .map_err(|_| anyhow::anyhow!(message))?
+}
+
 struct OutputSender {
     events: SyncSender<SessionEvent>,
 }
@@ -193,11 +199,14 @@ fn start_resize_thread(
     let thread = thread::Builder::new()
         .name("terminal-resize".into())
         .spawn(move || {
-            for _ in signals.forever() {
-                if let Err(error) = resize() {
-                    let _ = events.send(SessionEvent::ResizeFailed(error));
-                    break;
+            let result = catch_panic("resize thread panicked", || {
+                for _ in signals.forever() {
+                    resize()?;
                 }
+                Ok(())
+            });
+            if let Err(error) = result {
+                let _ = events.send(SessionEvent::ResizeFailed(error));
             }
 
             Ok(())
@@ -297,8 +306,10 @@ fn start_input_thread(
     thread::Builder::new()
         .name("keyboard-input".into())
         .spawn(move || {
-            let stdin = std::io::stdin();
-            let result = forward_input(stdin.lock(), writer);
+            let result = catch_panic("keyboard input thread panicked", || {
+                let stdin = std::io::stdin();
+                forward_input(stdin.lock(), writer)
+            });
 
             // A closed receiver means the session has already ended.
             let _ = events.send(SessionEvent::InputFinished(result));
@@ -313,10 +324,12 @@ fn start_output_thread(
     thread::Builder::new()
         .name("shell-output".into())
         .spawn(move || {
-            let writer = OutputSender {
-                events: events.clone(),
-            };
-            let result = forward_output(reader, writer);
+            let result = catch_panic("shell output thread panicked", || {
+                let writer = OutputSender {
+                    events: events.clone(),
+                };
+                forward_output(reader, writer)
+            });
 
             // A closed receiver means the session has already ended.
             let _ = events.send(SessionEvent::OutputFinished(result));
@@ -330,6 +343,96 @@ mod tests {
     use std::ffi::OsString;
     use std::io::{self, BufWriter};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn panic_boundary_preserves_success_and_regular_errors() {
+        assert_eq!(catch_panic("unexpected panic", || Ok(7)).unwrap(), 7);
+        let error = catch_panic::<()>("unexpected panic", || {
+            Err(io::Error::new(ErrorKind::BrokenPipe, "test failure").into())
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            ErrorKind::BrokenPipe
+        );
+    }
+
+    #[test]
+    fn session_panic_restores_terminal_before_returning_an_error() {
+        if run_in_test_terminal(
+            "wrapper::tests::session_panic_restores_terminal_before_returning_an_error",
+        ) {
+            return;
+        }
+        let before = terminal_settings();
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "read value"]);
+
+        let error = catch_panic::<()>("session panicked", || {
+            let _session = ShellSession::start(command).unwrap();
+            assert!(crossterm::terminal::is_raw_mode_enabled().unwrap());
+            panic!("test session panic");
+        })
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "session panicked");
+        assert!(!crossterm::terminal::is_raw_mode_enabled().unwrap());
+        assert_eq!(terminal_settings(), before);
+    }
+
+    #[test]
+    fn output_panic_reports_failure_while_other_senders_remain_open() {
+        struct PanickingReader;
+        impl Read for PanickingReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                panic!("test output panic");
+            }
+        }
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let thread = start_output_thread(PanickingReader, sender.clone()).unwrap();
+
+        let event = receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+
+        match event {
+            SessionEvent::OutputFinished(Err(error)) => {
+                assert_eq!(error.to_string(), "shell output thread panicked");
+            }
+            _ => panic!("expected an output panic error"),
+        }
+        thread.join().unwrap();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        drop(sender);
+    }
+
+    #[test]
+    fn resize_panic_reports_failure_before_cleanup() {
+        if run_in_test_terminal("wrapper::tests::resize_panic_reports_failure_before_cleanup") {
+            return;
+        }
+        let signals = terminal::watch_resize().unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let mut guard =
+            start_resize_thread(|| panic!("test resize panic"), signals, sender).unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGWINCH).unwrap();
+
+        let event = receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+
+        match event {
+            SessionEvent::ResizeFailed(error) => {
+                assert_eq!(error.to_string(), "resize thread panicked");
+            }
+            _ => panic!("expected a resize panic error"),
+        }
+        guard.stop().unwrap();
+        assert!(guard.thread.is_none());
+    }
 
     #[test]
     fn session_events_flush_output_after_input_finishes() {

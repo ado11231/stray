@@ -33,9 +33,20 @@ enum Shell {
     Bash,
 }
 
-fn main() -> Result<std::process::ExitCode> {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    // Report failures after session cleanup, while the terminal is usable again.
+    std::panic::set_hook(Box::new(|_| {}));
+    match wrapper::catch_panic("session panicked", || run(cli)) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("stray: {}", error.to_string().replace(['\r', '\n'], " "));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
 
+fn run(cli: Cli) -> Result<std::process::ExitCode> {
     match cli.command {
         Command::Install => bail!("install is not built yet"),
         Command::Uninstall => bail!("uninstall is not built yet"),
