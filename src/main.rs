@@ -1,4 +1,3 @@
-#[cfg(test)]
 mod image_check;
 mod install;
 mod shell;
@@ -66,9 +65,25 @@ fn run(cli: Cli) -> Result<std::process::ExitCode> {
                 .or_else(|| std::env::var_os("SHELL"))
                 .context("SHELL is not set")?;
             let command = wrapper::build_shell_command(&shell_path, login);
+            let check = match image_check::probe::run(std::env::var_os("TMUX").is_some()) {
+                Ok(check) => check,
+                Err(error) => {
+                    if error.downcast_ref::<wrapper::TerminationSignal>().is_some() {
+                        return Err(error);
+                    }
+                    eprintln!("stray: {error}; starting shell directly");
+                    return wrapper::run_shell_directly(&shell_path, login);
+                }
+            };
+            if !check.supported {
+                eprintln!("stray: images unavailable; starting shell without a cat");
+                if check.input.is_empty() {
+                    return wrapper::run_shell_directly(&shell_path, login);
+                }
+            }
 
             match wrapper::ShellSession::start(command) {
-                Ok(session) => session.run(),
+                Ok(session) => session.run_with_input(check.input),
                 Err(error) => {
                     eprintln!("stray: {error}; starting shell directly");
                     wrapper::run_shell_directly(&shell_path, login)
