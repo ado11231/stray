@@ -90,8 +90,17 @@ mod tests {
                         Shell::Bash => "/bin/bash",
                         Shell::Zsh => "/bin/zsh",
                     };
-                    let suffix = if login { " --login" } else { "" };
-                    assert_eq!(output, format!("start --shell {shell_path}{suffix}"));
+                    let arguments = output.strip_prefix("start --shell ").unwrap();
+                    let actual_path = if login {
+                        arguments.strip_suffix(" --login").unwrap()
+                    } else {
+                        arguments
+                    };
+                    // Linux may resolve /bin/zsh through /usr/bin after startup.
+                    assert_eq!(
+                        std::fs::canonicalize(actual_path).unwrap(),
+                        std::fs::canonicalize(shell_path).unwrap()
+                    );
                 }
             }
         }
