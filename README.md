@@ -1,9 +1,19 @@
 # Stray
 
 * A small cat that lives in your terminal.
-* It sits on your prompt, runs to the bottom of the screen when you type, and comes back when you stop.
-* It eats, naps, and sleeps by the clock. You can give it treats, pet it, and name it.
-* Early work. Only an image test runs so far.
+* Planned: it sits on your prompt, runs to the bottom when you type, and comes back when you stop.
+* Planned: it eats, naps, and sleeps by the clock. You can give it treats, pet it, and name it.
+* The shell wrapper and image test work today. The wrapper does not draw a cat yet.
+
+## Try The Wrapper
+
+```sh
+cargo run --release --bin stray -- start --login
+```
+
+* Runs an interactive login shell inside Stray. Type `exit` to return.
+* Startup integration supports bash and zsh.
+* [Phase 1 checks](docs/PHASE1-TESTING.md) cover real-terminal validation.
 
 ## Try The Image Test
 

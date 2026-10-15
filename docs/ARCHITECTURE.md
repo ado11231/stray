@@ -2,7 +2,8 @@
 
 * How Stray works inside, and what every source file will do.
 * What the cat does: [DESIGN.md](DESIGN.md). Order of work: [ROADMAP.md](ROADMAP.md).
-* Only a small image test is written so far. Plan as of October 5, 2026.
+* The image test, shell wrapper, bash and zsh startup, and install/uninstall are implemented.
+* The bar, cat behavior, and pet commands below describe planned work.
 
 ## Contents
 

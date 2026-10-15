@@ -2,7 +2,7 @@
 
 * What Stray does today, what has been tested, and what comes next.
 * A feature is complete only after it has run in a real terminal.
-* Last updated October 5, 2026.
+* Last updated October 14, 2026.
 
 ## Contents
 
@@ -20,7 +20,7 @@
 | Phase | Goal | Status |
 | --- | --- | --- |
 | 0 | An image test: a cat running along the bottom rows | Complete |
-| 1 | A wrapper you cannot notice | Next |
+| 1 | A wrapper you cannot notice | Implemented; real-terminal checks pending |
 | 2 | The image check, and the bar with a cat that sits still | Planned |
 | 3 | The prompt: sit, run down, come back when idle | Planned |
 | 4 | The cat's day and resting actions | Planned |
@@ -58,11 +58,14 @@ flowchart LR
 
 * **Done when:** the cat runs there and back in both terminals with no flicker, no gaps, and nothing left behind.
 * **Result:** done in `--resend` mode. Placing by ID works in kitty but not in VS Code. See the [Test Record](#test-record).
-* The tmux test moves to Phase 2, on Linux, because tmux is not on the Mac.
+* Image support inside tmux remains deferred to Phase 2, including Linux testing.
 
 ## Next
 
 ### Phase 1: The Wrapper
+
+* All eight items below are implemented. Automated checks pass on macOS and Linux.
+* Use the [terminal checklist](PHASE1-TESTING.md) to finish validation in kitty and VS Code.
 
 1. `stray start` runs your shell in a PTY and passes every key and all output through.
 2. The inner shell starts as a login shell when the first one was.
@@ -183,6 +186,62 @@ flowchart LR
 5. Is two rows tall enough for the cat?
 
 ## Test Record
+
+### Phase 1: October 14, 2026, Automated And PTY Checks
+
+* Tested code: `3aa187f`, on the CI branch in [PR #1](https://github.com/ado11231/stray/pull/1).
+* Local system: macOS 26.5.2, arm64, Rust 1.99.0.
+* No kitty or VS Code window results have been recorded for this phase yet.
+
+| Check | Result |
+| --- | --- |
+| Formatting and Clippy with warnings denied | Passed locally and in GitHub Actions. |
+| Automated tests | All 62 passed locally and on Linux and macOS CI runners. |
+| Release build with the lockfile | Passed locally. |
+| Rust 1.89 compatibility | All targets checked successfully on Linux CI. |
+| Input, output, resize, and exit status | Automated tests passed, including repeated PTY resizing. |
+| Startup failure, caught panics, and termination signals | Automated fallback and cleanup tests passed. |
+| bash and zsh startup guards | Automated login, stale-marker, SSH, and tmux guard tests passed. |
+| Installer edits | Automated duplicate, removal, symlink, and permission tests passed. |
+| Login profile settings | A temporary zsh login profile kept its variable and PATH entry inside Stray. |
+| Colors | ANSI color bytes reached the outer PTY. Visual appearance is pending. |
+| Ctrl C | Interrupted `sleep 30`, returned to the prompt, and reported status 130. |
+| vim 9.1 | Opened in the wrapped PTY, saved typed text, and returned to the shell. |
+| tmux 3.7b | Attached to an isolated server, ran a pane command, and returned to the shell. The pane inherited Stray's outer marker. |
+
+The extra PTY checks used the release binary and temporary zsh startup files.
+They did not change personal shell settings or use existing tmux sessions.
+They establish process and byte behavior, not visual correctness in a terminal app.
+
+#### Forwarding Measurements
+
+One local sample compared direct login zsh with login zsh through Stray.
+Both used an outer PTY, the same temporary profile, and a 24 by 80 terminal.
+Output measurements used a 4 MiB text file, one warm-up, then five timed runs.
+Key measurements used 100 individual typed characters and waited for each echo.
+
+| Measurement | Direct shell | Through Stray |
+| --- | --- | --- |
+| Median time to receive 4 MiB | 46.1 ms | 42.0 ms |
+| Median key echo | 0.016 ms | 0.035 ms |
+| 95th percentile key echo | 0.018 ms | 0.043 ms |
+
+The reader checked that all payload characters arrived. Timings include PTY I/O
+and the test reader, but exclude GUI rendering. The small output-time difference
+does not establish a speedup. Real-terminal performance remains unverified.
+
+#### Remaining Acceptance Checks
+
+| Check | kitty | VS Code |
+| --- | --- | --- |
+| Typing, paste, history, and colors look and feel normal | Pending | Pending |
+| vim, Claude Code, tmux, Ctrl C, and repeated window resizing | Pending | Pending |
+| SSH session and return to the local shell | Pending | Pending |
+| Personal login profile settings remain available | Pending | Pending |
+| New windows started from Stray get their own wrapper | Pending | Pending |
+| Large-file output speed and scrollback | Pending | Pending |
+
+Phase 1 remains open until these checks are recorded in both terminal apps.
 
 ### Phase 0: October 2, 2026, kitty And VS Code
 
