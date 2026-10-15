@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod image_check;
 mod install;
 mod shell;
 mod terminal;
