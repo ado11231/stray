@@ -58,6 +58,7 @@ fn start_forwards_resizes_and_preserves_shell_exit_code() {
     command.arg("start");
     command.env("SHELL", "/bin/sh");
     command.env("ENV", "/dev/null");
+    command.env_remove("TMUX");
     let mut session = TestSession {
         child: pty
             .slave
@@ -82,6 +83,11 @@ fn start_forwards_resizes_and_preserves_shell_exit_code() {
             }
         }
     });
+
+    wait_for_output(&output, "\x1b[c");
+    writer
+        .write_all(b"\x1b_Gi=3927641;OK\x1b\\\x1b[?62;22c")
+        .expect("image support reply should reach Stray");
 
     for (rows, cols) in [(24, 80), (40, 120), (10, 30), (24, 80)] {
         pty.master

@@ -145,7 +145,12 @@ impl ShellSession {
         })
     }
 
-    pub fn run(mut self) -> Result<ExitCode> {
+    #[cfg(test)]
+    pub fn run(self) -> Result<ExitCode> {
+        self.run_with_input(Vec::new())
+    }
+
+    pub fn run_with_input(mut self, input: Vec<u8>) -> Result<ExitCode> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(16);
         let mut resize_guard = start_resize_thread(
             move || resize_pty(self.master.as_ref(), terminal::read_size()?),
@@ -153,7 +158,7 @@ impl ShellSession {
             sender.clone(),
         )?;
 
-        forward_session(self.reader, self.writer, sender, receiver)?;
+        forward_session(self.reader, self.writer, input, sender, receiver)?;
 
         let status = self
             .shell
@@ -294,11 +299,12 @@ pub fn forward_input(mut reader: impl Read, mut writer: impl Write) -> Result<()
 fn forward_session(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
+    input: Vec<u8>,
     sender: SyncSender<SessionEvent>,
     receiver: Receiver<SessionEvent>,
 ) -> Result<()> {
     // Owning the receiver here closes the queue before resize cleanup on any error.
-    let _input_thread = start_input_thread(writer, sender.clone())?;
+    let _input_thread = start_input_thread(writer, input, sender.clone())?;
     let output_thread = start_output_thread(reader, sender)?;
     let stdout = std::io::stdout();
     forward_session_events(receiver, stdout.lock())?;
@@ -335,13 +341,17 @@ fn forward_session_events(receiver: Receiver<SessionEvent>, mut output: impl Wri
 
 /// Forwards keys directly and reports when input forwarding ends.
 fn start_input_thread(
-    writer: impl Write + Send + 'static,
+    mut writer: impl Write + Send + 'static,
+    input: Vec<u8>,
     events: SyncSender<SessionEvent>,
 ) -> Result<JoinHandle<()>> {
     thread::Builder::new()
         .name("keyboard-input".into())
         .spawn(move || {
             let result = catch_panic("keyboard input thread panicked", || {
+                writer
+                    .write_all(&input)
+                    .context("could not forward input from image check")?;
                 let stdin = std::io::stdin();
                 forward_input(stdin.lock(), writer)
             });

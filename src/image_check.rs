@@ -1,5 +1,7 @@
 use std::io::{self, Write};
 
+pub mod probe;
+
 const IMAGE_ID: u32 = 3_927_641;
 const RESPONSE_LIMIT: usize = 1024;
 
