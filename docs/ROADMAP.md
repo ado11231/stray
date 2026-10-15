@@ -20,8 +20,8 @@
 | Phase | Goal | Status |
 | --- | --- | --- |
 | 0 | An image test: a cat running along the bottom rows | Complete |
-| 1 | A wrapper you cannot notice | Implemented; real-terminal checks pending |
-| 2 | The image check, and the bar with a cat that sits still | Planned |
+| 1 | A wrapper you cannot notice | Complete, per user report on October 14 |
+| 2 | The image check, and the bar with a cat that sits still | Image check implemented; bar next |
 | 3 | The prompt: sit, run down, come back when idle | Planned |
 | 4 | The cat's day and resting actions | Planned |
 | 5 | Commands to treat, pet, quiet, and name the cat | Planned |
@@ -60,12 +60,11 @@ flowchart LR
 * **Result:** done in `--resend` mode. Placing by ID works in kitty but not in VS Code. See the [Test Record](#test-record).
 * Image support inside tmux remains deferred to Phase 2, including Linux testing.
 
-## Next
-
 ### Phase 1: The Wrapper
 
 * All eight items below are implemented. Automated checks pass on macOS and Linux.
-* Use the [terminal checklist](PHASE1-TESTING.md) to finish validation in kitty and VS Code.
+* The user reported testing finished on October 14 and requested Phase 2.
+* The earlier [terminal checklist](PHASE1-TESTING.md) remains available for regression checks.
 
 1. `stray start` runs your shell in a PTY and passes every key and all output through.
 2. The inner shell starts as a login shell when the first one was.
@@ -82,11 +81,13 @@ flowchart LR
   * `code .` and a new kitty window opened from a Stray shell both start their own Stray.
   * Typing feels no slower. Printing a large file takes about as long as without Stray.
 
-## Planned
+## Next
 
 ### Phase 2: The Bar
 
 * The hardest phase.
+* Item 1 is implemented, with automated PTY coverage. Real-terminal checks for
+  this change are in [Phase 2 testing](PHASE2-TESTING.md). Items 2 through 9 are next.
 
 1. Run the image check. If it fails, run the shell directly and print the hint once.
 2. Reserve the bottom two rows.
@@ -105,6 +106,8 @@ flowchart LR
   * tmux started from a Stray window shows one cat, in the window's bar.
   * tmux started on its own shows a whole bar in every pane, and the cats stay put when you switch panes and windows.
   * An ssh session shows one cat, in your own bar.
+
+## Planned
 
 ### Phase 3: The Prompt
 
@@ -187,6 +190,23 @@ flowchart LR
 
 ## Test Record
 
+### Phase 2: October 14, 2026, Image Check
+
+* Automated checks pass locally on macOS: 74 tests, formatting, Clippy with
+  warnings denied, and a release build with the lockfile.
+* PTY tests cover support, rejection, timeout, shell exit status, and keys typed
+  during the check. Existing resize tests now send a positive image reply.
+* Parser tests cover split replies, unrelated input, reply ordering, and tmux
+  query wrapping. A concurrent test checks that only one window claims the hint.
+* Real-terminal image checks, tmux passthrough, and Linux CI are not yet verified
+  for this change. No bar or cat is drawn yet.
+
+### Phase 1: October 14, 2026, User Follow-up
+
+* The user reported that Phase 1 testing was finished and asked to continue to
+  Phase 2. No individual terminal results or new measurements accompanied that
+  report. The earlier detailed record below is preserved as it was recorded.
+
 ### Phase 1: October 14, 2026, Automated And PTY Checks
 
 * Tested code: `3aa187f`, on the CI branch in [PR #1](https://github.com/ado11231/stray/pull/1).
@@ -241,7 +261,7 @@ does not establish a speedup. Real-terminal performance remains unverified.
 | New windows started from Stray get their own wrapper | Pending | Pending |
 | Large-file output speed and scrollback | Pending | Pending |
 
-Phase 1 remains open until these checks are recorded in both terminal apps.
+These were the outstanding checks at the time of this earlier record.
 
 ### Phase 0: October 2, 2026, kitty And VS Code
 

@@ -2,7 +2,8 @@
 
 * How Stray works inside, and what every source file will do.
 * What the cat does: [DESIGN.md](DESIGN.md). Order of work: [ROADMAP.md](ROADMAP.md).
-* The image test, shell wrapper, bash and zsh startup, and install/uninstall are implemented.
+* The image test, shell wrapper, startup image check, bash and zsh startup,
+  and install/uninstall are implemented.
 * The bar, cat behavior, and pet commands below describe planned work.
 
 ## Contents
@@ -385,7 +386,12 @@ mochi() { stray "$@"; }
 
 * Inside tmux, the test picture is wrapped for passthrough like every other image code.
 * If no answer comes back within a short time, that also means no.
-* On the first no, Stray prints one line that says why, saves that it did, and stays silent after that. Inside tmux, the line names the `allow-passthrough` setting.
+* On the first no, Stray prints one hint and creates an `image-hint-shown` marker
+  in its data folder. The hint names terminal images and tmux's `allow-passthrough`.
+* The check waits up to 500 ms. It removes its replies and keeps other input.
+  If keys were read before an unsupported result, a plain PTY wrapper forwards
+  them to the shell. With no buffered input, Stray runs the shell directly.
+* If the marker cannot be created, Stray skips the hint and still starts the shell.
 * Stray never looks at the terminal's name.
 
 ## Where Data Is Stored
@@ -395,7 +401,8 @@ mochi() { stray "$@"; }
 | What | File | Holds |
 | --- | --- | --- |
 | Settings | `config.toml` in the config folder | The schedule, bar height, idle times, action weights, and the test clock shift. |
-| State | `state.json` in the data folder | The cat's name, whether it is quiet, the time of the last treat and the last pet, and whether the image hint was shown. |
+| State (planned) | `state.json` in the data folder | The cat's name, whether it is quiet, and the time of the last treat and pet. |
+| Image hint | `image-hint-shown` in the data folder | Its presence means the hint has been claimed by a window. |
 
 * The state file is written to a new file and swapped in, so a crash cannot leave it half written.
 
