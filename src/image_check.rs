@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+pub mod hint;
 pub mod probe;
 
 const IMAGE_ID: u32 = 3_927_641;

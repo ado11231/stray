@@ -76,7 +76,7 @@ fn run(cli: Cli) -> Result<std::process::ExitCode> {
                 }
             };
             if !check.supported {
-                eprintln!("stray: images unavailable; starting shell without a cat");
+                image_check::hint::show_once();
                 if check.input.is_empty() {
                     return wrapper::run_shell_directly(&shell_path, login);
                 }
