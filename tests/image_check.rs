@@ -3,9 +3,13 @@
 use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+// Tests run in parallel, so the clock alone can give two tests the same folder.
+static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
 struct Terminal {
     child: Box<dyn Child + Send + Sync>,
@@ -18,8 +22,9 @@ struct Terminal {
 impl Terminal {
     fn start() -> Self {
         let directory = std::env::temp_dir().join(format!(
-            "stray-probe-{}-{}",
+            "stray-probe-{}-{}-{}",
             std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
