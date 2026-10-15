@@ -3,7 +3,8 @@
 * A small cat that lives in your terminal.
 * Planned: it sits on your prompt, runs to the bottom when you type, and comes back when you stop.
 * Planned: it eats, naps, and sleeps by the clock. You can give it treats, pet it, and name it.
-* The shell wrapper and image test work today. The wrapper does not draw a cat yet.
+* The shell wrapper checks image support and falls back when images are unavailable.
+* The wrapper does not draw a cat yet.
 
 ## Try The Wrapper
 
@@ -14,6 +15,7 @@ cargo run --release --bin stray -- start --login
 * Runs an interactive login shell inside Stray. Type `exit` to return.
 * Startup integration supports bash and zsh.
 * [Phase 1 checks](docs/PHASE1-TESTING.md) cover real-terminal validation.
+* [Phase 2 checks](docs/PHASE2-TESTING.md) cover the new image check and fallback.
 
 ## Try The Image Test
 
