@@ -127,6 +127,20 @@ mod tests {
     }
 
     #[test]
+    fn success_requires_a_complete_reply_and_an_exact_ok() {
+        for message in ["OKAY\x1b\\", "OK", "OK\x1b"] {
+            let mut replies = Replies::default();
+            replies.feed(format!("\x1b_Gi={IMAGE_ID};{message}").as_bytes());
+            assert!(!replies.supported);
+        }
+        let mut replies = Replies::default();
+        replies.feed(format!("\x1b_Gi={IMAGE_ID};OK\x1b\\").as_bytes());
+        assert!(replies.supported);
+        assert!(!replies.finished);
+        assert!(replies.finish().input.is_empty());
+    }
+
+    #[test]
     fn an_unterminated_response_cannot_grow_the_pending_buffer_forever() {
         let mut replies = Replies::default();
         let mut bytes = b"\x1b_G".to_vec();
