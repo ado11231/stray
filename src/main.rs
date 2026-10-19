@@ -82,7 +82,7 @@ fn run(cli: Cli) -> Result<std::process::ExitCode> {
                 }
             }
 
-            match wrapper::ShellSession::start(command) {
+            match wrapper::ShellSession::start_with_bar(command, check.supported, check.cursor) {
                 Ok(session) => session.run_with_input(check.input),
                 Err(error) => {
                     eprintln!("stray: {error}; starting shell directly");
