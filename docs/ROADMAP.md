@@ -88,6 +88,9 @@ flowchart LR
 * The hardest phase.
 * Item 1 is implemented, with automated PTY coverage. Real-terminal checks for
   this change are in [Phase 2 testing](PHASE2-TESTING.md). Items 2 through 9 are next.
+* Bar size calculations are implemented and unit tested. They leave two rows
+  when images are supported and the terminal has at least 10 rows. Connecting
+  them to the PTY and scroll region is next; the running shell still uses all rows.
 
 1. Run the image check. If it fails, run the shell directly and print the hint once.
 2. Reserve the bottom two rows.
