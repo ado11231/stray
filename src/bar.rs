@@ -1,5 +1,8 @@
 use portable_pty::PtySize;
 
+mod output;
+pub use output::Output;
+
 const BAR_ROWS: u16 = 2;
 const MIN_TERMINAL_ROWS: u16 = 10;
 
