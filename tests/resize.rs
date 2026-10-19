@@ -99,7 +99,7 @@ fn start_forwards_resizes_and_preserves_shell_exit_code() {
             })
             .expect("outer PTY should resize");
 
-        // Allow the resize thread time to run, with a bounded shell loop.
+        // Allow the session loop time to resize, with a bounded shell loop.
         writeln!(
             writer,
             "for attempt in 1 2 3 4 5 6 7 8 9 10; do size=$(stty size); if [ \"$size\" = '{rows} {cols}' ]; then printf '\\nSTRAY_SIZE_%s_DONE\\n' \"$size\"; break; fi; sleep 0.05; done"
