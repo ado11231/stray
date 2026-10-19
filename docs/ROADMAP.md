@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | 0 | An image test: a cat running along the bottom rows | Complete |
 | 1 | A wrapper you cannot notice | Complete, per user report on October 14 |
-| 2 | The image check, and the bar with a cat that sits still | Image check implemented; bar next |
+| 2 | The image check, and the bar with a cat that sits still | Image check and basic row reservation implemented; terminal checks pending |
 | 3 | The prompt: sit, run down, come back when idle | Planned |
 | 4 | The cat's day and resting actions | Planned |
 | 5 | Commands to treat, pet, quiet, and name the cat | Planned |
@@ -86,11 +86,14 @@ flowchart LR
 ### Phase 2: The Bar
 
 * The hardest phase.
-* Item 1 is implemented, with automated PTY coverage. Real-terminal checks for
-  this change are in [Phase 2 testing](PHASE2-TESTING.md). Items 2 through 9 are next.
-* Bar size calculations are implemented and unit tested. They leave two rows
-  when images are supported and the terminal has at least 10 rows. Connecting
-  them to the PTY and scroll region is next; the running shell still uses all rows.
+* The image check and basic row reservation are implemented. Supported terminals
+  give the shell two fewer rows at startup and on resize. Windows shorter than
+  10 rows use the full area. Exit and shutdown restore the full scroll region.
+* Region updates wait for complete escape sequences and synchronized updates.
+  Cursor tracking preserves the program's saved cursor slot.
+* Automated tests cover these changes. Real-terminal checks are still pending:
+  see [Phase 2 testing](PHASE2-TESTING.md). Full screen programs, region resets,
+  cursor confinement, image drawing, and tmux placeholders remain unfinished.
 
 1. Run the image check. If it fails, run the shell directly and print the hint once.
 2. Reserve the bottom two rows.

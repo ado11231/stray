@@ -1,7 +1,7 @@
-# Phase 2 Image Check
+# Phase 2 Image Check And Basic Bar
 
-This first Phase 2 change checks image support at startup. It does not reserve
-rows or draw a cat yet. Run these checks in kitty and VS Code on macOS.
+Stray checks image support and reserves two bottom rows in supported terminals.
+The cat is not drawn yet. Run these checks in kitty and VS Code on macOS.
 
 ## Supported Terminal
 
@@ -18,6 +18,27 @@ printf 'marker: %s\n' "$STRAY_TTY"
 The second `tty` should differ from the first and match the marker. There should
 be no image hint and no reply text at the prompt. Type, paste, resize, and use
 Ctrl C as usual. Type `exit` to return to the outer shell.
+
+## Reserved Rows
+
+Run `stty size` before and inside Stray. At the same window size, the inner shell
+should report two fewer rows and the same columns. Print enough lines to scroll:
+
+```sh
+for i in {1..100}; do printf 'line %s\n' "$i"; done
+```
+
+The last two rows should remain empty. Scroll back to check that older output
+is still available. Resize above and below 10 physical rows, checking `stty size`
+each time. At 9 rows the shell should get all 9; at 10 it should get 8.
+
+Keep a partially typed command at the prompt while resizing. Check that the
+cursor and text stay together, including when changing the window width.
+Exit Stray, then print more lines. The outer shell should use the full height.
+Repeat with `kill -TERM <stray-pid>` from a second window to check cleanup.
+
+This is basic row reservation. Full screen programs can still reset the region
+or write into the bar; protecting those cases is a later Phase 2 change.
 
 ## Unsupported Terminal
 
