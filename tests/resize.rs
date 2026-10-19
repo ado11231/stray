@@ -44,6 +44,15 @@ fn wait_for_output(output: &Receiver<Vec<u8>>, expected: &str) {
 
 #[test]
 fn start_forwards_resizes_and_preserves_shell_exit_code() {
+    check_session(false);
+}
+
+#[test]
+fn termination_restores_the_scroll_region() {
+    check_session(true);
+}
+
+fn check_session(terminate: bool) {
     let pty = native_pty_system()
         .openpty(PtySize {
             rows: 24,
@@ -70,10 +79,12 @@ fn start_forwards_resizes_and_preserves_shell_exit_code() {
     let (sender, output) = mpsc::channel();
     let reader_thread = thread::spawn(move || {
         let mut buffer = [0u8; 4096];
+        let mut received = Vec::new();
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => {
+                    received.extend_from_slice(&buffer[..count]);
                     if sender.send(buffer[..count].to_vec()).is_err() {
                         break;
                     }
@@ -82,14 +93,21 @@ fn start_forwards_resizes_and_preserves_shell_exit_code() {
                 Err(_) => break,
             }
         }
+        received
     });
 
     wait_for_output(&output, "\x1b[c");
     writer
-        .write_all(b"\x1b_Gi=3927641;OK\x1b\\\x1b[?62;22c")
+        .write_all(b"\x1b_Gi=3927641;OK\x1b\\\x1b[1;1R\x1b[?62;22c")
         .expect("image support reply should reach Stray");
 
-    for (rows, cols) in [(24, 80), (40, 120), (10, 30), (24, 80)] {
+    for (rows, cols, shell_rows) in [
+        (24, 80, 22),
+        (40, 120, 38),
+        (9, 30, 9),
+        (10, 30, 8),
+        (24, 80, 22),
+    ] {
         pty.master
             .resize(PtySize {
                 rows,
@@ -99,18 +117,33 @@ fn start_forwards_resizes_and_preserves_shell_exit_code() {
             })
             .expect("outer PTY should resize");
 
+        let region = if rows < 10 {
+            "\x1b[r".to_owned()
+        } else {
+            format!("\x1b[1;{shell_rows}r")
+        };
+        wait_for_output(&output, &region);
+
         // Allow the session loop time to resize, with a bounded shell loop.
         writeln!(
             writer,
-            "for attempt in 1 2 3 4 5 6 7 8 9 10; do size=$(stty size); if [ \"$size\" = '{rows} {cols}' ]; then printf '\\nSTRAY_SIZE_%s_DONE\\n' \"$size\"; break; fi; sleep 0.05; done"
+            "for attempt in 1 2 3 4 5 6 7 8 9 10; do size=$(stty size); if [ \"$size\" = '{shell_rows} {cols}' ]; then printf '\\nSTRAY_SIZE_%s_DONE\\n' \"$size\"; break; fi; sleep 0.05; done"
         )
         .expect("size check should reach shell");
         writer.flush().expect("size check should flush");
-        wait_for_output(&output, &format!("STRAY_SIZE_{rows} {cols}_DONE"));
+        wait_for_output(&output, &format!("STRAY_SIZE_{shell_rows} {cols}_DONE"));
     }
 
-    writeln!(writer, "exit 7").expect("exit command should reach shell");
-    writer.flush().expect("exit command should flush");
+    if terminate {
+        let status = std::process::Command::new("/bin/kill")
+            .args(["-TERM", &session.child.process_id().unwrap().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    } else {
+        writeln!(writer, "exit 7").expect("exit command should reach shell");
+        writer.flush().expect("exit command should flush");
+    }
     let deadline = Instant::now() + Duration::from_secs(5);
     let status = loop {
         if let Some(status) = session.child.try_wait().expect("Stray should be waitable") {
@@ -120,6 +153,12 @@ fn start_forwards_resizes_and_preserves_shell_exit_code() {
         thread::sleep(Duration::from_millis(10));
     };
 
-    assert_eq!(status.exit_code(), 7);
-    reader_thread.join().expect("output reader should finish");
+    assert_eq!(status.exit_code(), if terminate { 143 } else { 7 });
+    let received = reader_thread.join().expect("output reader should finish");
+    let cleanup = b"\x18\x1b\\\x1b[?2026l\x1b[?6l\x1b[r";
+    assert!(
+        received
+            .windows(cleanup.len())
+            .any(|bytes| bytes == cleanup)
+    );
 }

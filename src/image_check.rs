@@ -7,10 +7,17 @@ const IMAGE_ID: u32 = 3_927_641;
 const RESPONSE_LIMIT: usize = 1024;
 
 pub fn write_query(output: &mut impl Write, inside_tmux: bool) -> io::Result<()> {
-    let query = format!("\x1b_Gi={IMAGE_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c");
+    let query = format!("\x1b_Gi={IMAGE_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[6n\x1b[c");
     if inside_tmux {
+        // Ask tmux for the pane cursor, rather than the outer terminal cursor.
+        output.write_all(b"\x1b[6n")?;
         output.write_all(b"\x1bPtmux;")?;
-        output.write_all(query.replace('\x1b', "\x1b\x1b").as_bytes())?;
+        output.write_all(
+            query
+                .replace("\x1b[6n", "")
+                .replace('\x1b', "\x1b\x1b")
+                .as_bytes(),
+        )?;
         output.write_all(b"\x1b\\")?;
     } else {
         output.write_all(query.as_bytes())?;
@@ -24,6 +31,7 @@ pub struct Replies {
     pub input: Vec<u8>,
     pub supported: bool,
     pub finished: bool,
+    pub cursor: Option<(u16, u16)>,
 }
 
 impl Replies {
@@ -38,8 +46,29 @@ impl Replies {
         while !self.pending.is_empty() {
             let graphics = b"\x1b_G";
             let attributes = b"\x1b[?";
-            if graphics.starts_with(&self.pending) || attributes.starts_with(&self.pending) {
+            if graphics.starts_with(&self.pending) || b"\x1b[".starts_with(&self.pending) {
                 return;
+            } else if self.pending.starts_with(b"\x1b[") {
+                let parameters = &self.pending[2..];
+                if parameters.last() == Some(&b'R') && self.cursor.is_none() && !self.finished {
+                    let text = String::from_utf8_lossy(&parameters[..parameters.len() - 1]);
+                    if let Some((row, column)) = text.split_once(';')
+                        && let (Ok(row), Ok(column)) = (row.parse::<u16>(), column.parse::<u16>())
+                        && row > 0
+                        && column > 0
+                    {
+                        self.cursor = Some((row - 1, column - 1));
+                        self.pending.clear();
+                        return;
+                    }
+                }
+                if parameters
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit() || *byte == b';')
+                    && self.pending.len() < RESPONSE_LIMIT
+                {
+                    return;
+                }
             }
             if self.pending.starts_with(graphics) {
                 if self.pending.ends_with(b"\x1b\\") {
@@ -91,13 +120,14 @@ mod tests {
 
     #[test]
     fn replies_can_split_at_every_byte_without_losing_keys() {
-        let bytes = format!("hello\x1b_Gi={IMAGE_ID};OK\x1b\\\x1b[?62;22c世界\x1b[A\r");
+        let bytes = format!("hello\x1b_Gi={IMAGE_ID};OK\x1b\\\x1b[12;34R\x1b[?62;22c世界\x1b[A\r");
         for split in 0..=bytes.len() {
             let mut replies = Replies::default();
             replies.feed(&bytes.as_bytes()[..split]);
             replies.feed(&bytes.as_bytes()[split..]);
             let replies = replies.finish();
             assert!(replies.supported && replies.finished);
+            assert_eq!(replies.cursor, Some((11, 33)));
             assert_eq!(replies.input, "hello世界\x1b[A\r".as_bytes());
         }
     }
@@ -151,18 +181,19 @@ mod tests {
     }
 
     #[test]
-    fn query_is_check_only_and_tmux_escapes_both_questions() {
+    fn query_checks_images_and_asks_tmux_for_the_pane_cursor() {
         let mut direct = Vec::new();
         write_query(&mut direct, false).unwrap();
         assert!(direct.windows(3).any(|bytes| bytes == b"a=q"));
-        assert!(direct.ends_with(b"\x1b\\\x1b[c"));
+        assert!(direct.ends_with(b"\x1b\\\x1b[6n\x1b[c"));
         let mut tmux = Vec::new();
         write_query(&mut tmux, true).unwrap();
-        assert!(tmux.starts_with(b"\x1bPtmux;"));
+        assert!(tmux.starts_with(b"\x1b[6n\x1bPtmux;"));
         assert_eq!(
-            &tmux[7..tmux.len() - 2],
+            &tmux[11..tmux.len() - 2],
             String::from_utf8(direct)
                 .unwrap()
+                .replace("\x1b[6n", "")
                 .replace('\x1b', "\x1b\x1b")
                 .as_bytes()
         );
