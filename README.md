@@ -1,36 +1,34 @@
 # Stray
 
 * A small cat that lives in your terminal.
-* Planned: it sits on your prompt, runs to the bottom when you type, and comes back when you stop.
-* Planned: it eats, naps, and sleeps by the clock. You can give it treats, pet it, and name it.
-* The shell wrapper checks image support and falls back when images are unavailable.
-* The wrapper does not draw a cat yet.
+* Right now Stray wraps your shell and saves two rows at the bottom for the cat. The cat itself is not drawn yet.
+* Works with bash and zsh, in kitty and the VS Code terminal.
 
-## Try The Wrapper
+## Run It
+
+* Needs Rust 1.89 or newer.
+* In VS Code, turn on `terminal.integrated.enableImages` first.
 
 ```sh
 cargo run --release --bin stray -- start --login
 ```
 
-* Runs an interactive login shell inside Stray. Type `exit` to return.
-* Startup integration supports bash and zsh.
-* [Phase 1 checks](docs/PHASE1-TESTING.md) cover real-terminal validation.
-* [Phase 2 checks](docs/PHASE2-TESTING.md) cover the new image check and fallback.
+* This opens your shell inside Stray. Type `exit` to leave.
+* If the terminal cannot show images, Stray starts your shell normally.
 
-## Try The Image Test
-
-* Needs Rust 1.89 or newer, and kitty or the VS Code terminal.
-* In VS Code, turn on `terminal.integrated.enableImages` first.
+## Install
 
 ```sh
-cargo run --release --bin stray-image-test -- --resend
+cargo install --path .
+stray install
 ```
 
-* A placeholder cat runs along the bottom of the window and back.
-* Press q or Ctrl C to stop early.
+* `stray install` adds one line to your `.zshrc` or bash profile, so new windows open with Stray.
+* `stray uninstall` removes that line.
 
 ## Docs
 
 * [Design](docs/DESIGN.md): what Stray is and how the cat behaves.
 * [Architecture](docs/ARCHITECTURE.md): how it is built.
 * [Roadmap](docs/ROADMAP.md): what is done and what comes next.
+* [Contributing](CONTRIBUTING.md): code rules and checks to run before a commit.

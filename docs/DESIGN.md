@@ -2,7 +2,7 @@
 
 * What Stray is and how the cat behaves.
 * How it is built: [ARCHITECTURE.md](ARCHITECTURE.md). What comes next: [ROADMAP.md](ROADMAP.md).
-* Only a small image test is written so far. Plan as of October 5, 2026.
+* This describes the planned behavior. See the [roadmap](ROADMAP.md) for current progress.
 
 ## Contents
 
