@@ -446,6 +446,9 @@ stray/
 ├── src/
 │   ├── main.rs            reads the command line and calls the matching command
 │   ├── wrapper.rs         stray start: the PTY and the main loop
+│   ├── wrapper/           starting the shell, the main loop, and its worker threads
+│   ├── escape.rs          named terminal codes, so other files read in plain words
+│   ├── env.rs             names of the environment variables Stray reads
 │   ├── terminal.rs        the real terminal: raw input, size, and resize
 │   ├── screen.rs          the screen model and the checks that keep the bar safe
 │   ├── bar.rs             reserves the rows and draws the bar
@@ -468,6 +471,8 @@ stray/
 | --- | --- | --- |
 | `main.rs` | Reads the command line with `clap`. | every command, `wrapper` |
 | `wrapper.rs` | Runs the image check and the shell in a PTY. Owns the main loop. | `terminal`, `screen`, `image`, `bar`, `prompt`, `cat`, `activity`, `schedule`, `state` |
+| `escape.rs` | Names the terminal codes Stray sends and reads, such as the scroll region reset. | none |
+| `env.rs` | Names the environment variables Stray reads, such as `SHELL` and `TMUX`. | none |
 | `terminal.rs` | Raw mode, size, and resizes of the real terminal. Restores it on exit. | none |
 | `screen.rs` | The screen model. Spots clears, region resets, full screen views, and batched updates. Stops cursor moves into the bar. Removes the prompt mark. | none |
 | `bar.rs` | Sets the scroll region, draws the bar, and restores the cursor. | `screen`, `image`, `frames` |
