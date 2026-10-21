@@ -1,9 +1,14 @@
+//! The bar: two rows at the bottom of the terminal where the cat will live.
+
 use portable_pty::PtySize;
 
 mod output;
 pub use output::Output;
 
+/// Rows kept free at the bottom of the terminal for the cat.
 const BAR_ROWS: u16 = 2;
+
+/// Shorter terminals keep every row for the shell and show no bar.
 const MIN_TERMINAL_ROWS: u16 = 10;
 
 /// Calculates the shell area, leaving room for the bar when it can be shown.
