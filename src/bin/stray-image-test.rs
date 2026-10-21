@@ -647,9 +647,9 @@ mod tests {
     }
 
     #[test]
-    fn options_are_read() {
+    fn options_are_read() -> Result<(), String> {
         let args = ["--dark", "--resend"].map(String::from).into_iter();
-        let options = Options::parse(args).unwrap();
+        let options = Options::parse(args)?;
         assert_eq!(
             options,
             Options {
@@ -659,5 +659,6 @@ mod tests {
             }
         );
         assert!(Options::parse(["--fast".to_string()].into_iter()).is_err());
+        Ok(())
     }
 }
