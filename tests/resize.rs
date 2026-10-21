@@ -5,7 +5,28 @@ use std::io::{ErrorKind, Read, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
+use stray_cat::escape::{DEVICE_ATTRIBUTES_QUERY, RESET_SCROLL_REGION, RESTORE_TERMINAL};
 
+type Result = std::result::Result<(), Box<dyn std::error::Error>>;
+
+/// Says images are supported, the cursor is in the top left, and the check is over.
+const SUPPORTED_TERMINAL_REPLIES: &[u8] = b"\x1b_Gi=3927641;OK\x1b\\\x1b[1;1R\x1b[?62;22c";
+
+const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Exit code of a process stopped by SIGTERM (128 + 15).
+const TERMINATED_EXIT_CODE: u32 = 143;
+
+fn size(rows: u16, cols: u16) -> PtySize {
+    PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+/// Stops Stray if a test ends early.
 struct TestSession {
     child: Box<dyn Child + Send + Sync>,
 }
@@ -19,60 +40,55 @@ impl Drop for TestSession {
     }
 }
 
-fn wait_for_output(output: &Receiver<Vec<u8>>, expected: &str) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+/// Reads output until `expected` appears.
+fn wait_for_output(output: &Receiver<Vec<u8>>, expected: &[u8]) -> Result {
+    let deadline = Instant::now() + TIMEOUT;
     let mut received = Vec::new();
 
     loop {
         let chunk = output
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .unwrap_or_else(|error| {
-                panic!(
-                    "missing {expected:?}: {error}; output: {}",
+            .map_err(|error| {
+                format!(
+                    "missing {:?}: {error}; output: {}",
+                    String::from_utf8_lossy(expected),
                     String::from_utf8_lossy(&received)
                 )
-            });
+            })?;
         received.extend_from_slice(&chunk);
-        if received
-            .windows(expected.len())
-            .any(|window| window == expected.as_bytes())
-        {
-            return;
+        if contains(&received, expected) {
+            return Ok(());
         }
     }
 }
 
-#[test]
-fn start_forwards_resizes_and_preserves_shell_exit_code() {
-    check_session(false);
+fn contains(bytes: &[u8], part: &[u8]) -> bool {
+    bytes.windows(part.len()).any(|window| window == part)
 }
 
 #[test]
-fn termination_restores_the_scroll_region() {
-    check_session(true);
+fn start_forwards_resizes_and_preserves_shell_exit_code() -> Result {
+    check_session(false)
 }
 
-fn check_session(terminate: bool) {
-    let pty = native_pty_system()
-        .openpty(PtySize {
-            rows: 24,
-            cols: 80,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .expect("outer PTY should open");
-    let mut reader = pty.master.try_clone_reader().expect("reader should open");
-    let mut writer = pty.master.take_writer().expect("writer should open");
+#[test]
+fn termination_restores_the_scroll_region() -> Result {
+    check_session(true)
+}
+
+/// Runs Stray in a fake terminal, resizes it a few times, and checks the shell's size.
+/// Then ends the shell, or stops Stray with SIGTERM when `terminate` is true.
+fn check_session(terminate: bool) -> Result {
+    let pty = native_pty_system().openpty(size(24, 80))?;
+    let mut reader = pty.master.try_clone_reader()?;
+    let mut writer = pty.master.take_writer()?;
     let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_stray"));
     command.arg("start");
     command.env("SHELL", "/bin/sh");
     command.env("ENV", "/dev/null");
     command.env_remove("TMUX");
     let mut session = TestSession {
-        child: pty
-            .slave
-            .spawn_command(command)
-            .expect("Stray should start"),
+        child: pty.slave.spawn_command(command)?,
     };
     drop(pty.slave);
 
@@ -96,10 +112,8 @@ fn check_session(terminate: bool) {
         received
     });
 
-    wait_for_output(&output, "\x1b[c");
-    writer
-        .write_all(b"\x1b_Gi=3927641;OK\x1b\\\x1b[1;1R\x1b[?62;22c")
-        .expect("image support reply should reach Stray");
+    wait_for_output(&output, DEVICE_ATTRIBUTES_QUERY)?;
+    writer.write_all(SUPPORTED_TERMINAL_REPLIES)?;
 
     for (rows, cols, shell_rows) in [
         (24, 80, 22),
@@ -108,57 +122,53 @@ fn check_session(terminate: bool) {
         (10, 30, 8),
         (24, 80, 22),
     ] {
-        pty.master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .expect("outer PTY should resize");
+        pty.master.resize(size(rows, cols))?;
 
+        // Terminals shorter than 10 rows have no bar, so the whole screen scrolls.
         let region = if rows < 10 {
-            "\x1b[r".to_owned()
+            RESET_SCROLL_REGION.to_vec()
         } else {
-            format!("\x1b[1;{shell_rows}r")
+            format!("\x1b[1;{shell_rows}r").into_bytes()
         };
-        wait_for_output(&output, &region);
+        wait_for_output(&output, &region)?;
 
         // Allow the session loop time to resize, with a bounded shell loop.
         writeln!(
             writer,
             "for attempt in 1 2 3 4 5 6 7 8 9 10; do size=$(stty size); if [ \"$size\" = '{shell_rows} {cols}' ]; then printf '\\nSTRAY_SIZE_%s_DONE\\n' \"$size\"; break; fi; sleep 0.05; done"
-        )
-        .expect("size check should reach shell");
-        writer.flush().expect("size check should flush");
-        wait_for_output(&output, &format!("STRAY_SIZE_{shell_rows} {cols}_DONE"));
+        )?;
+        writer.flush()?;
+        let done = format!("STRAY_SIZE_{shell_rows} {cols}_DONE");
+        wait_for_output(&output, done.as_bytes())?;
     }
 
     if terminate {
+        let pid = session
+            .child
+            .process_id()
+            .ok_or("Stray should have a process ID")?;
         let status = std::process::Command::new("/bin/kill")
-            .args(["-TERM", &session.child.process_id().unwrap().to_string()])
-            .status()
-            .unwrap();
+            .args(["-TERM", &pid.to_string()])
+            .status()?;
         assert!(status.success());
     } else {
-        writeln!(writer, "exit 7").expect("exit command should reach shell");
-        writer.flush().expect("exit command should flush");
+        writeln!(writer, "exit 7")?;
+        writer.flush()?;
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + TIMEOUT;
     let status = loop {
-        if let Some(status) = session.child.try_wait().expect("Stray should be waitable") {
+        if let Some(status) = session.child.try_wait()? {
             break status;
         }
         assert!(Instant::now() < deadline, "Stray should exit promptly");
         thread::sleep(Duration::from_millis(10));
     };
 
-    assert_eq!(status.exit_code(), if terminate { 143 } else { 7 });
-    let received = reader_thread.join().expect("output reader should finish");
-    let cleanup = b"\x18\x1b\\\x1b[?2026l\x1b[?6l\x1b[r";
-    assert!(
-        received
-            .windows(cleanup.len())
-            .any(|bytes| bytes == cleanup)
-    );
+    let expected_code = if terminate { TERMINATED_EXIT_CODE } else { 7 };
+    assert_eq!(status.exit_code(), expected_code);
+    let received = reader_thread
+        .join()
+        .map_err(|_| "output reader thread panicked")?;
+    assert!(contains(&received, &RESTORE_TERMINAL.concat()));
+    Ok(())
 }
