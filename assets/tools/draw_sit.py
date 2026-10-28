@@ -36,15 +36,19 @@ EYES = [(233, 115, 243, 132), (256, 116, 266, 133)]   # eye boxes in run_body.pn
 # degrees it is tipped up (0 lies flat, 90 stands up).
 # chest: the front. leg_top: where the front legs start. tail_root, tail_len,
 # tail_start, tail_bend: the tail leaves here, this long, at this angle
-# (180 is straight back), turning this many degrees.
+# (180 is straight back), turning this many degrees. head_turn: degrees the
+# head tips, below 0 nose down.
 SIT = dict(head=(178, 14), haunch=(157, 204, 55, 43, 90), chest=(160, 78, 236, 200),
-           leg_top=(212, 140), tail_root=(124, 194), tail_len=95, tail_start=180, tail_bend=200)
+           leg_top=(212, 140), tail_root=(124, 194), tail_len=95, tail_start=180, tail_bend=200, head_turn=0)
 # lying down with the head up, close to the last wake frame
 LOW = dict(head=(196, 100), haunch=(131, 204, 65, 40, 0), chest=(140, 136, 256, 204),
-           leg_top=(232, 186), tail_root=(74, 196), tail_len=30, tail_start=180, tail_bend=20)
+           leg_top=(232, 186), tail_root=(74, 196), tail_len=30, tail_start=180, tail_bend=20, head_turn=0)
 # standing on four legs, close to the walk
 STANDING = dict(head=(193, 42), haunch=(102, 170, 62, 38, 0), chest=(104, 86, 252, 158),
-                leg_top=(212, 148), tail_root=(58, 108), tail_len=60, tail_start=105, tail_bend=100)
+                leg_top=(212, 148), tail_root=(58, 108), tail_len=60, tail_start=105, tail_bend=100, head_turn=0)
+# leaning over the bowl to eat, the head tipped down
+EAT = dict(head=(204, 100), haunch=(150, 204, 52, 42, 75), chest=(166, 118, 262, 204),
+           leg_top=(236, 164), tail_root=(118, 196), tail_len=95, tail_start=180, tail_bend=200, head_turn=-10)
 
 LEG_W = 20
 PAW_R = 11
@@ -53,6 +57,17 @@ TAIL_W = (20, 16)
 TAIL_SWAY = 10                   # degrees the tip sways
 
 FRAMES = 16
+LEAN = [0.35, 0.7]               # share of the way from SIT to EAT in each lean down frame
+EAT_FRAMES = 8
+CHEW = 3                         # px the head bobs while it eats
+
+# the bowl, on its own small canvas so it can stay at home while the cat walks off
+BOWL_CANVAS = (100, 215)         # same height as the cat, so it scales the same
+BOWL_W, BOWL_H = 86, 26          # rim width, and height from the floor to the rim
+BOWL_SLANT = 12                  # px the sides come in toward the floor
+BOWL_RIM = 7                     # half height of the rim oval
+BOWL = (150, 160, 185, 255)      # a soft grey blue, so it stands apart from the white cat
+FOOD = (96, 104, 128, 255)
 BLINK_AT = (10, 11)              # frames with the eyes shut
 STAND = [0.0, 0.3, 0.6, 0.85]    # share of the way from LOW to SIT in each stand frame
 SIT_DOWN = [0.0, 0.3, 0.6, 0.85] # share of the way from STANDING to SIT in each sit down frame
@@ -238,6 +253,33 @@ def smooth(layer, ears_y):
     return Image.fromarray(a)
 
 
+def turn_head(head, pose):
+    """The head tipped by head_turn around its middle, and where its top left goes."""
+    x, y = big(pose["head"])
+    if not pose["head_turn"]:
+        return head, (round(x), round(y))
+    turned = head.rotate(pose["head_turn"], resample=Image.BICUBIC, expand=True)
+    x -= (turned.width - head.width) / 2
+    y -= (turned.height - head.height) / 2
+    return turned, (round(x), round(y))
+
+
+def draw_bowl():
+    """The food bowl that stays at the home spot: a rim, and a body that narrows to the floor."""
+    im = Image.new("RGBA", big(BOWL_CANVAS), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(im)
+    mid = BOWL_CANVAS[0] / 2
+    rim_y = GROUND - BOWL_H
+    top, bottom = BOWL_W / 2, BOWL_W / 2 - BOWL_SLANT
+    draw.polygon([big(c) for c in [(mid - top, rim_y), (mid + top, rim_y),
+                                   (mid + bottom, GROUND), (mid - bottom, GROUND)]], fill=BOWL)
+    rim = (mid - top, rim_y - BOWL_RIM, mid + top, rim_y + BOWL_RIM)
+    draw.ellipse([v * SCALE for v in rim], fill=BOWL)
+    food = (mid - top + 5, rim_y - BOWL_RIM + 3, mid + top - 5, rim_y + BOWL_RIM - 2)
+    draw.ellipse([v * SCALE for v in food], fill=FOOD)
+    return im.resize(BOWL_CANVAS, Image.LANCZOS)
+
+
 def draw_frame(head, pose, sway=0):
     im = Image.new("RGBA", big(CANVAS), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
@@ -252,7 +294,7 @@ def draw_frame(head, pose, sway=0):
     draw_haunch(body_draw, pose["haunch"])
     body_draw.ellipse([v * SCALE for v in pose["chest"]], fill=WHITE)
     draw_back(body_draw, pose)
-    head_at = tuple(round(v) for v in big(pose["head"]))
+    head, head_at = turn_head(head, pose)
     body.alpha_composite(head, head_at)
     im.alpha_composite(smooth(body, pose["head"][1] + EARS))
     draw_leg(ImageDraw.Draw(im), leg_x, leg_y, WHITE, EDGE)
@@ -278,3 +320,11 @@ for k in range(FRAMES):
 save("sit", frames)
 save("stand", [draw_frame(head, blend(LOW, SIT, share)) for share in STAND])
 save("sit_down", [draw_frame(head, blend(STANDING, SIT, share, SIT_DOWN_PACE)) for share in SIT_DOWN])
+save("lean", [draw_frame(head, blend(SIT, EAT, share)) for share in LEAN])
+eat = []
+for k in range(EAT_FRAMES):
+    turn = 2 * math.pi * k / EAT_FRAMES
+    pose = dict(EAT, head=(EAT["head"][0], EAT["head"][1] + CHEW * (0.5 - 0.5 * math.cos(2 * turn))))
+    eat.append(draw_frame(head, pose, TAIL_SWAY * math.sin(turn)))
+save("eat", eat)
+save("bowl", [draw_bowl()])
