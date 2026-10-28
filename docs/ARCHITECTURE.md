@@ -17,14 +17,13 @@
 7. [Knowing What Is Happening](#knowing-what-is-happening)
 8. [The Cat Brain](#the-cat-brain)
 9. [Drawing The Cat](#drawing-the-cat)
-10. [The Prompt](#the-prompt)
-11. [The Schedule](#the-schedule)
-12. [How Commands Reach The Cat](#how-commands-reach-the-cat)
-13. [How Stray Starts](#how-stray-starts)
-14. [Where Data Is Stored](#where-data-is-stored)
-15. [Safety](#safety)
-16. [Hard Parts](#hard-parts)
-17. [File Reference](#file-reference)
+10. [The Schedule](#the-schedule)
+11. [How Commands Reach The Cat](#how-commands-reach-the-cat)
+12. [How Stray Starts](#how-stray-starts)
+13. [Where Data Is Stored](#where-data-is-stored)
+14. [Safety](#safety)
+15. [Hard Parts](#hard-parts)
+16. [File Reference](#file-reference)
 
 ## Overview
 
@@ -117,7 +116,7 @@ flowchart LR
 ```mermaid
 flowchart TD
     Main["main.rs<br/>reads the command line"]
-    Wrap["The wrapper<br/>wrapper, terminal, screen, bar, image, prompt"]
+    Wrap["The wrapper<br/>wrapper, terminal, screen, bar, image"]
     Cat["The cat<br/>cat, frames, activity, schedule"]
     Store["Saved data<br/>state, config"]
     Cmd["Commands<br/>treat, pet, quiet, name, install"]
@@ -187,9 +186,9 @@ sequenceDiagram
 
 | Signal | How Stray Gets It | What It Tells The Cat |
 | --- | --- | --- |
-| **Prompt mark** | The shell prints it before each prompt, with whether the last command failed. Stray removes it from the output. | A prompt was drawn, where, and whether to flinch. |
+| **Prompt mark** | The shell prints it before each prompt, with whether the last command failed. Stray removes it from the output. | You are back at the prompt, and whether to flinch. |
 | **Foreground program** | Stray asks the PTY which program is in front and looks up its name and command line with `sysinfo`. This works the same on macOS and Linux. | The shell is waiting, or a program is running, and which one. |
-| **Keys** | Stray sees every key. | You are typing, or how long you have been idle. |
+| **Keys** | Stray sees every key. | You are typing, so look up, or how long you have been idle. |
 | **Output** | Stray sees all output. | Something is printing, or the screen is quiet. |
 | **Full screen flag** | The screen model has it. | A program such as `vim` has the screen. |
 | **Clock** | The local time, read once a minute. | Meal time, nap time, night, or free time. |
@@ -203,38 +202,36 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> AtPrompt: a window opens in free time
+    [*] --> Free: a window opens in free time
     [*] --> Sleeping: a window opens at nap or night time
-    AtPrompt --> Home: a key, output, or a resize
-    Home --> AtPrompt: idle at the prompt
-    Home --> Watching: a program runs
-    Watching --> Home: back at the prompt
-    Home --> Eating: meal time
-    Eating --> Home: the meal is done
-    Home --> Sleeping: nap or night time, or stray quiet
-    Sleeping --> Home: the time ends, or stray come
+    Free --> Watching: a program runs
+    Watching --> Free: back at the prompt
+    Free --> Eating: meal time
+    Eating --> Free: the meal is done
+    Free --> Sleeping: nap or night time, or stray quiet
+    Sleeping --> Free: the time ends, or stray come
 ```
 
 | Mode | Where The Cat Is | What It Does |
 | --- | --- | --- |
-| **AtPrompt** | Just after the `>` | Sits and waits. |
-| **Home** | The bar | Picks a resting action. |
-| **Watching** | The bar | Watches, naps after a long run, perks up, or flinches. |
-| **Eating** | Its bowl in the bar | Eats for a few minutes. |
+| **Free** | Anywhere in the bar | Picks a resting action. |
+| **Watching** | Where it stopped | Watches, naps after a long run, perks up, or flinches. |
+| **Eating** | Its bowl at the home spot | Eats for a few minutes. |
 | **Sleeping** | The home spot | Sleeps. Keys do not wake it. |
 
-* Moving between the prompt and the bar is part of the change, not a mode of its own. The cat runs down and climbs up.
-* A treat or a pet is a short reaction on top of any mode. Then the cat goes back to that mode.
-* Each tick, the brain returns a frame, where to draw it, and whether anything changed.
+* The cat never leaves the bar, so its position is just a column in the bar.
+* Walking to the home spot for a meal or for sleep is part of the change, not a mode of its own.
+* Looking up at a key, a treat, and a pet are short reactions on top of a mode. Then the cat goes back to that mode.
+* Each tick, the brain returns a frame, the column to draw it at, and whether anything changed.
 
 ### Resting Actions
 
-* In the Home mode, the brain picks an action at random by weight, runs it for a set time, then picks again.
+* In the Free mode, the brain picks an action at random by weight, runs it for a set time, then picks again.
 
 | Action | Starting Weight | Movement |
 | --- | --- | --- |
 | Sit | 55 | None. |
-| Walk | 20 | Across the bar and back, slowly. |
+| Walk | 20 | To a random spot in the bar, slowly. |
 | Play | 15 | In place. |
 | Run | 10 | Across the bar, fast. |
 
@@ -254,7 +251,7 @@ stateDiagram-v2
 
 ### On Each Change
 
-1. Move to the cat's spot, in the bar or at the prompt.
+1. Move to the cat's column in the bar.
 2. Send the new frame and show it there, scaled to two rows. Two IDs take turns.
 3. Remove the old frame and its picture.
 4. Put the cursor back.
@@ -281,33 +278,6 @@ stateDiagram-v2
 4. tmux treats the placeholders as text, so the cat moves and hides with its pane.
 
 * kitty supports placeholders. Other terminals are untested inside tmux.
-* Inside tmux, the cat stays in the bar and does not come up to the prompt.
-
-## The Prompt
-
-### Sitting On The Prompt
-
-1. Wait for a prompt mark. At launch, this skips anything the shell prints while starting.
-2. Check the screen model. The two cells after the cursor, and the row below them, must be empty.
-3. Place the cat's frame there, just after the `>`.
-
-### Running Down
-
-1. On the first key, remove the frame, then forward the key.
-2. Run the cat fast down the empty rows below the prompt into the bar.
-3. It ends in the home spot.
-
-* Output or a resize removes the frame the same way, and the cat starts in the bar.
-
-### Coming Back Up
-
-1. The cat is in Home mode, the shell is in front, and you have been idle for 30 seconds.
-2. The brain checks that the space after the `>` is still empty.
-3. The cat walks along the bar to the column under the cursor.
-4. It climbs up the empty rows below the prompt and sits after the `>`.
-
-* If you type while it climbs, it turns and runs back down.
-* After a clear, the prompt is at the top and the rows below are empty, so the climb is long. After a build, the prompt is just above the bar, so the climb is short.
 
 ## The Schedule
 
@@ -432,9 +402,7 @@ mochi() { stray "$@"; }
 | A program inside the shell may show its own images. | Random ID ranges, and remove only Stray's frames. |
 | Programs can move the cursor into the bar. | Stop every move at the last shell row. |
 | Drawing in the middle of a batched update can tear the screen. | Wait for the batch to end. |
-| A cat at the prompt sits where your text will go. | Remove it before forwarding the first key. Check the space is empty before placing it. |
-| A prompt with text on the right, such as a clock, may leave no empty space. | Check the screen model. If there is no room, the cat stays in the bar. |
-| Placed images do not move with tmux panes. | Use placeholders inside tmux, and keep the cat in the bar. |
+| Placed images do not move with tmux panes. | Use placeholders inside tmux. |
 | Placeholders may only work in kitty. | Test them in kitty first. Treat other terminals as untested inside tmux. |
 | tmux may have passthrough off. | The image check fails and the hint names the setting. |
 
@@ -453,7 +421,6 @@ stray/
 │   ├── screen.rs          the screen model and the checks that keep the bar safe
 │   ├── bar.rs             reserves the rows and draws the bar
 │   ├── image.rs           the image protocol: check, send, remove, and tmux
-│   ├── prompt.rs          the cat on the prompt: sitting, running down, coming back
 │   ├── cat.rs             the cat brain: modes, actions, and movement
 │   ├── frames.rs          the cat's frames and its bowl
 │   ├── activity.rs        the signals, turned into plain facts
@@ -470,14 +437,13 @@ stray/
 | File | Purpose | Uses |
 | --- | --- | --- |
 | `main.rs` | Reads the command line with `clap`. | every command, `wrapper` |
-| `wrapper.rs` | Runs the image check and the shell in a PTY. Owns the main loop. | `terminal`, `screen`, `image`, `bar`, `prompt`, `cat`, `activity`, `schedule`, `state` |
+| `wrapper.rs` | Runs the image check and the shell in a PTY. Owns the main loop. | `terminal`, `screen`, `image`, `bar`, `cat`, `activity`, `schedule`, `state` |
 | `escape.rs` | Names the terminal codes Stray sends and reads, such as the scroll region reset. | none |
 | `env.rs` | Names the environment variables Stray reads, such as `SHELL` and `TMUX`. | none |
 | `terminal.rs` | Raw mode, size, and resizes of the real terminal. Restores it on exit. | none |
 | `screen.rs` | The screen model. Spots clears, region resets, full screen views, and batched updates. Stops cursor moves into the bar. Removes the prompt mark. | none |
 | `bar.rs` | Sets the scroll region, draws the bar, and restores the cursor. | `screen`, `image`, `frames` |
 | `image.rs` | The image check. Sends, shows, and removes frames. Inside tmux, wraps codes for passthrough and prints placeholders. | none |
-| `prompt.rs` | Places the cat after the `>`, and moves it between the prompt and the bar. | `screen`, `image`, `frames` |
 | `cat.rs` | Picks the mode, resting action, position, and frame. | `activity`, `schedule`, `frames` |
 | `frames.rs` | Holds every frame. Colors and flips them. | none |
 | `activity.rs` | Tracks typing, idle time, output, and the foreground program. | none |
