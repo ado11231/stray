@@ -41,7 +41,7 @@
 | Term | Meaning |
 | --- | --- |
 | **Bar** | The bottom two rows of the terminal. They belong to the cat. |
-| **Home spot** | The right end of the bar, where the cat sleeps and keeps its bowl. |
+| **Home spot** | The left end of the bar, where the cat starts, sleeps, and keeps its bowl. |
 | **Prompt** | The line where your shell waits for a command. |
 | **Idle** | The shell is waiting at the prompt, and nothing has been typed or printed for a while. |
 | **Schedule** | The times of day the cat eats, naps, and sleeps. |
