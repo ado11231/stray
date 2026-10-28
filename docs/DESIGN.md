@@ -144,8 +144,10 @@ flowchart TD
 | --- | --- | --- |
 | Sleeping | Drawn, 27 frames | Naps and night. |
 | Waking | Drawn, 5 frames | Waking from a nap or at morning. |
-| Sitting | To draw | Resting and watching. |
-| Walking | To draw | The walk action, and going to the home spot. |
+| Standing up | Drawn, 4 frames | Getting up into a sit after waking. |
+| Sitting | Drawn, 16 frames | Resting and watching. |
+| Sitting down | Drawn, 4 frames | Sitting down after a walk. Played backwards to get up. |
+| Walking | Drawn, 8 frames | The walk action, and going to the home spot. |
 | Running | To redraw | The run action. |
 | Eating | To draw | Meals and treats, with a small bowl. |
 | Playing | To draw | The play action. |
