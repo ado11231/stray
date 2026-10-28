@@ -2,7 +2,7 @@
 
 Usage: python3 play_in_kitty.py [rows]
 The cat lives in the bottom rows, like the bar. It sleeps until you press
-any key, wakes, then sits there blinking and swaying its tail.
+any key, wakes, stands up, then sits there blinking and swaying its tail.
 Press q at any time to quit.
 """
 import base64
@@ -18,7 +18,7 @@ from pathlib import Path
 SPRITES = Path(__file__).resolve().parent.parent / "sprites"
 ROWS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 IMAGE_ID = 1
-SLEEP_MS, WAKE_MS, SIT_MS = 133, 70, 120
+SLEEP_MS, WAKE_MS, STAND_MS, SIT_MS = 133, 70, 90, 120
 HOME_COL = 0             # its spot in the bar: the bottom left corner
 CHUNK = 4096
 
@@ -71,7 +71,7 @@ def play(pose, ms, col, row, loop=True):
 
 
 def main():
-    sleep, wake, sit = frames("sleep"), frames("wake"), frames("sit")
+    sleep, wake, stand, sit = frames("sleep"), frames("wake"), frames("stand"), frames("sit")
     rows, _ = term_size()
     col, row = HOME_COL, rows - ROWS
     sys.stdout.write("\033[2J\033[?25l")
@@ -81,6 +81,8 @@ def main():
     if play(sleep, SLEEP_MS, col, row) == "q":
         return
     if play(wake, WAKE_MS, col, row, loop=False) == "q":
+        return
+    if play(stand, STAND_MS, col, row, loop=False) == "q":
         return
     while play(sit, SIT_MS, col, row) != "q":
         pass
