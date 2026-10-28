@@ -194,6 +194,7 @@ sequenceDiagram
 | **Clock** | The local time, read once a minute. | Meal time, nap time, night, or free time. |
 
 * Any bytes from the keyboard count as a key. Stray does not work out which key.
+* A command that exits with code 130 was stopped with Ctrl C. It does not count as failed, so the cat does not flinch.
 * Idle means the shell is in front, with no keys and no output for a set time.
 * A coding agent is found by name: `claude` or `codex`.
 * `tmux` and `ssh` are found by name too. The cat treats them like any other program.

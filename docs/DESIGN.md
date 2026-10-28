@@ -66,6 +66,7 @@
 ```
 
 * The cat is shown as text here. The real cat is a small image.
+* The bar has no line or border. It is empty rows with the cat in them, so the window looks like one normal terminal.
 * Programs never draw in the bar. They do not know it exists.
 * In a window too short to share, the bar turns off.
 
@@ -126,7 +127,7 @@ flowchart TD
 | Output is scrolling by | Sits and watches. |
 | A program has run for a long time | Naps until you are back at the prompt. |
 | A coding agent stops and waits for you | Perks up. |
-| A command fails | Flinches. |
+| A command fails | Flinches. Not when you stopped it with Ctrl C. |
 | A full screen program such as `vim` is open | Sits still. |
 
 * tmux and ssh count as programs too. See [tmux And ssh](#tmux-and-ssh).
@@ -243,6 +244,7 @@ flowchart TD
 | The cat's day follows the clock | Gives it a life with no saved data. | Every day is the same. |
 | Bar at the bottom | Scrolling back keeps working, and the prompt is usually just above. | In a fresh window the prompt is far from the bar. |
 | Bar is two rows | Room for the cat and its bowl. | Less space in short panels. |
+| No line around the bar | The terminal looks the same as without Stray, plus a cat. | Nothing shows where the shell's rows end. |
 | Stray runs your shell inside itself | The only way to animate while you type. | Harder to build. |
 | Image only, no text cat | A smooth cat and one way to draw. | Terminals without images get nothing. |
 | The cat always stays in the bar | It is never in your way, and programs cannot erase it. There is no need to find empty space on the screen. Much simpler to build. | It never visits your prompt. |
