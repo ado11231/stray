@@ -3,7 +3,8 @@
 Usage: python3 play_in_kitty.py [rows]
 The cat lives in the bottom rows, like the bar. It sleeps until you press
 any key, wakes, stands up and sits. Then it gets up, strolls out along the
-bar, sits down a while, and walks back home to the corner, over and over.
+bar, sits down a while, and walks back home to the corner, where it eats
+from its bowl. Then it does it all again.
 Press q at any time to quit.
 """
 import base64
@@ -21,12 +22,17 @@ from PIL import Image
 
 SPRITES = Path(__file__).resolve().parent.parent / "sprites"
 ROWS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-IMAGE_ID = 1
+IMAGE_ID, BOWL_ID = 1, 2
 SLEEP_MS, WAKE_MS, STAND_MS, SIT_MS, WALK_MS, SIT_DOWN_MS = 133, 70, 90, 120, 110, 90
+LEAN_MS, EAT_MS = 110, 120
 HOME_X = 0               # its spot in the bar: the bottom left corner
 AWAY = 0.45              # where it strolls to, as a share of the width
 SIT_LOOPS = 2            # times the sit plays before it moves on
 WALK_STRIDE = 0.330      # one walk loop covers this many image widths, from draw_walk.py
+BOWL_X = 301             # where the bowl sits from the cat's left edge, in sprite pixels, past the sleeping cat
+LEAN_STEP = (22, 44)     # sprite pixels the cat scoots toward the bowl in each lean frame
+EAT_STEP = 64            # and while it eats
+EAT_LOOPS = 3
 CHUNK = 4096
 
 
@@ -49,13 +55,15 @@ def term_size():
     return rows, cols, xpx / cols, ypx / rows
 
 
-def show(png, x, row, cell_w):
-    """Send one PNG frame x pixels into a row, replacing the last one. Only r=
-    is given, so kitty works out the width and the cat keeps its shape."""
+def show(png, x, row, cell_w, image_id=IMAGE_ID):
+    """Send one PNG frame x pixels into a row, replacing the last one with the
+    same id. Only r= is given, so kitty works out the width and the cat keeps
+    its shape. The bowl goes above the cat, so the cat eats behind its rim."""
     data = base64.standard_b64encode(png)
     col = int(x // cell_w)
     out = [f"\0337\033[{row + 1};{col + 1}H"]
-    keys = f"a=T,f=100,i={IMAGE_ID},q=2,C=1,r={ROWS},X={int(x - col * cell_w)}"
+    z = 1 if image_id == BOWL_ID else 0
+    keys = f"a=T,f=100,i={image_id},q=2,C=1,r={ROWS},z={z},X={int(x - col * cell_w)}"
     for start in range(0, len(data), CHUNK):
         part = data[start:start + CHUNK]
         more = 1 if start + CHUNK < len(data) else 0
@@ -67,7 +75,8 @@ def show(png, x, row, cell_w):
 
 
 def show_nothing():
-    sys.stdout.write(f"\033_Ga=d,d=I,i={IMAGE_ID},q=2\033\\")
+    for image_id in (IMAGE_ID, BOWL_ID):
+        sys.stdout.write(f"\033_Ga=d,d=I,i={image_id},q=2\033\\")
     sys.stdout.flush()
 
 
@@ -79,6 +88,7 @@ def key_pressed(timeout):
 def main():
     sleep, wake, stand, sit = frames("sleep"), frames("wake"), frames("stand"), frames("sit")
     walk, sit_down = frames("walk"), frames("sit_down")
+    lean, eat, bowl = frames("lean"), frames("eat"), frames("bowl")[0]
     # walk, sit down and sit, facing right (True) or left (False)
     facing = {True: (walk, sit_down, sit),
               False: (flipped(walk), flipped(sit_down), flipped(sit))}
@@ -87,6 +97,7 @@ def main():
     canvas_w, canvas_h = Image.open(io.BytesIO(sit[0])).size
     img_w = ROWS * cell_h * canvas_w / canvas_h
     step = WALK_STRIDE * img_w / len(walk)
+    px = img_w / canvas_w    # screen pixels per sprite pixel
     sys.stdout.write("\033[2J\033[?25l")
     sys.stdout.write(f"\033[1;1HStray test, {ROWS} rows. Any key wakes the cat, q quits.")
     sys.stdout.flush()
@@ -104,9 +115,9 @@ def main():
             i += 1
         return False
 
-    def stroll(x, to, right):
-        """Get up, walk from x to the spot to, and sit down there.
-        right is the way it sat. Returns True if q was pressed."""
+    def stroll(x, to, right, end_right):
+        """Get up, walk from x to the spot to, and sit down there facing right
+        if end_right. right is the way it sat. Returns True if q was pressed."""
         if play(facing[right][1][::-1], SIT_DOWN_MS, x):
             return True
         # it turns while standing, then walks the way it goes
@@ -118,9 +129,25 @@ def main():
                 return True
             x += step if to > x else -step
             i += 1
+        # it turns again if it has to, to face its bowl at home
+        _, sit_down, sit = facing[end_right]
         return play(sit_down, SIT_DOWN_MS, x) or play(sit, SIT_MS, x, SIT_LOOPS)
 
+    def eat_meal(x):
+        """Scoot up to the bowl, eat, and scoot back to sit. Returns True if q was pressed."""
+        steps = [x + step_px * px for step_px in LEAN_STEP]
+        for png, at in zip(lean, steps):
+            if play([png], LEAN_MS, at):
+                return True
+        if play(eat, EAT_MS, x + EAT_STEP * px, EAT_LOOPS):
+            return True
+        for png, at in zip(lean[::-1], steps[::-1]):
+            if play([png], LEAN_MS, at):
+                return True
+        return play(sit, SIT_MS, x)
+
     home, away = HOME_X, AWAY * cols * cell_w
+    show(bowl, home + BOWL_X * px, row, cell_w, BOWL_ID)
     if play(sleep, SLEEP_MS, home, forever=True):
         return
     if play(wake, WAKE_MS, home) or play(stand, STAND_MS, home):
@@ -130,9 +157,14 @@ def main():
     x, right = home, True
     while True:
         to = away if x == home else home
-        if stroll(x, to, right):
+        # at home it always faces right, toward the bowl
+        end_right = to == home or to > x
+        if stroll(x, to, right, end_right):
             return
-        x, right = to, to > x
+        x, right = to, end_right
+        # back home it eats, then sits up again
+        if x == home and eat_meal(x):
+            return
 
 
 old = termios.tcgetattr(sys.stdin)
