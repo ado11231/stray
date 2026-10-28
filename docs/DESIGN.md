@@ -261,6 +261,26 @@ flowchart TD
 * A bed, a toy, and other items in the bar.
 * Other shells, such as fish.
 * Testing iTerm2, Ghostty, and other terminals that pass the image check.
+* Done notifications. See below.
+
+### Done Notifications
+
+* A possible future addition, not planned in any phase yet.
+* When a long command or a coding agent finishes while you are away from the window, Stray sends a desktop notification. For example: "Mochi: cargo build finished", or "failed".
+* If you are watching the window, there is no notification. The cat just perks up in the bar.
+
+| Piece | How |
+| --- | --- |
+| The command finished | The prompt mark, which already says when the `>` is back and whether the command failed. |
+| It ran long enough | Time from when a program takes over to when the prompt is back. Only runs of about 10 seconds or more count, so `ls` never notifies. |
+| What it was | The foreground program's name, such as `cargo` or `claude`. |
+| An agent is waiting | A coding agent is in front and its output has gone quiet. A guess, not always right. |
+| You are away | Focus reporting: the terminal tells Stray when the window gains or loses focus. kitty and VS Code support it. |
+| The notification | kitty's desktop notification code. Terminals without it get the bell. |
+
+* `stray notify on` and `stray notify off` would turn it on and off.
+* Hard parts: programs such as `vim` and Claude Code turn on focus reporting for themselves, so Stray must pass those focus messages through only when the program asked for them. Notifications in VS Code are untested. tmux needs `focus-events on`.
+* Claude Code can already send its own notifications, so this helps most with builds, tests, and other long commands.
 
 ## Open Questions
 

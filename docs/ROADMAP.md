@@ -157,6 +157,7 @@ flowchart LR
 4. A bed, a toy, and other items in the bar.
 5. Other shells, such as fish.
 6. Testing iTerm2, Ghostty, and other terminals that pass the image check.
+7. Done notifications: a desktop notification when a long command or a coding agent finishes while you are away. See [Done Notifications](DESIGN.md#done-notifications).
 
 ## Known Risks
 
