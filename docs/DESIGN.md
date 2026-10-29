@@ -148,7 +148,7 @@ flowchart TD
 | Sitting | Drawn, 16 frames | Resting and watching. |
 | Sitting down | Drawn, 4 frames | Sitting down after a walk. Played backwards to get up. |
 | Walking | Drawn, 8 frames | The walk action, and going to the home spot. |
-| Running | To redraw | The run action. |
+| Running | Drawn, 8 frames | The run action, and chasing the ball. |
 | Leaning in | Drawn, 2 frames | Leaning from the sit down to the bowl. Played backwards to sit up. |
 | Eating | Drawn, 8 frames | Meals and treats, with its face in the bowl. |
 | Playing | Drawn, 15 frames | The play action: crouch, wiggle, pounce, and bat the ball. |
