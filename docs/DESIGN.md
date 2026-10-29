@@ -152,7 +152,7 @@ flowchart TD
 | Leaning in | Drawn, 2 frames | Leaning from the sit down to the bowl. Played backwards to sit up. |
 | Eating | Drawn, 8 frames | Meals and treats, with its face in the bowl. |
 | Playing | Drawn, 15 frames | The play action: crouch, wiggle, pounce, and bat the ball. |
-| Reactions | To draw | Looking up, flinching, perking up, and being petted. |
+| Reactions | Drawn, 15 frames | Looking up, flinching, perking up, and being petted. Each plays forward, then backward to settle. |
 
 * Every pose uses the same cat as the sleeping frames.
 * The sprites live in `assets/sprites`, one folder per pose.
