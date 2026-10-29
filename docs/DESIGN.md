@@ -151,13 +151,14 @@ flowchart TD
 | Running | To redraw | The run action. |
 | Leaning in | Drawn, 2 frames | Leaning from the sit down to the bowl. Played backwards to sit up. |
 | Eating | Drawn, 8 frames | Meals and treats, with its face in the bowl. |
-| Playing | To draw | The play action. |
+| Playing | Drawn, 15 frames | The play action: crouch, wiggle, pounce, and bat the ball. |
 | Reactions | To draw | Looking up, flinching, perking up, and being petted. |
 
 * Every pose uses the same cat as the sleeping frames.
 * The sprites live in `assets/sprites`, one folder per pose.
 * The bowl is its own image. It stays at the home spot, just past the sleeping cat's nose, and is drawn in front of the cat.
 * The cat scoots up to the bowl as it leans in to eat, and back as it sits up.
+* The ball is its own image too. It stays where it last rolled. The cat moves forward as it pounces.
 
 ## Commands
 
