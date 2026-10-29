@@ -1,12 +1,15 @@
 """Play the Stray sprites in kitty the way Stray will: one image, replaced each frame.
 
-Usage: python3 play_in_kitty.py [rows]
+Usage: python3 play_in_kitty.py [rows] [react]
 The cat lives in the bottom rows, like the bar. It sleeps until you press
 any key, wakes, stands up and sits. Then it gets up and goes after its
 ball: it crouches, wiggles, pounces and bats it along the bar, a few times.
 Then it walks back home to the corner and eats from its bowl, and does it
 all again. When the ball gets to the far end, it is put back for the next go.
 Press q at any time to quit.
+
+With react, the cat just sits at home and you press keys to see how it
+reacts: l looks up, f flinches, p perks up, h pets it.
 """
 import base64
 import fcntl
@@ -23,11 +26,15 @@ from pathlib import Path
 from PIL import Image
 
 SPRITES = Path(__file__).resolve().parent.parent / "sprites"
-ROWS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+ROWS = next((int(a) for a in sys.argv[1:] if a.isdigit()), 3)
+REACT_MODE = "react" in sys.argv[1:]
 IMAGE_ID, BOWL_ID, BALL_ID = 1, 2, 3
 SLEEP_MS, WAKE_MS, STAND_MS, SIT_MS, WALK_MS, SIT_DOWN_MS = 133, 70, 90, 120, 110, 90
 LEAN_MS, EAT_MS = 110, 120
 CROUCH_MS, WIGGLE_MS, POUNCE_MS, BAT_MS, ROLL_MS = 90, 80, 90, 90, 50
+REACT_MS, PURR_MS = 70, 90
+LOOK_HOLD_MS, FLINCH_HOLD_MS, PERK_HOLD_MS = 900, 300, 1500
+PURR_LOOPS = 4
 HOME_X = 0               # its spot in the bar: the bottom left corner
 SIT_LOOPS = 2            # times the sit plays before it moves on
 WALK_STRIDE = 0.330      # one walk loop covers this many image widths, from draw_walk.py
@@ -173,6 +180,36 @@ def main():
     def spot_for(ball_x):
         """Where to crouch so the pounce lands the cat right at the ball."""
         return ball_x + BALL_MID * px - (BAT_REACH + POUNCE_STEP[-1]) * px
+
+    def react(name, hold_ms):
+        """Go into a reaction, hold it, and settle back into the sit."""
+        into = frames(name)
+        play(into, REACT_MS, HOME_X)
+        wait(hold_ms)
+        play(into[::-1], REACT_MS, HOME_X)
+
+    def pet():
+        into, purr = frames("petted_in"), frames("purr")
+        play(into, REACT_MS, HOME_X)
+        play(purr, PURR_MS, HOME_X, PURR_LOOPS)
+        play(into[::-1], REACT_MS, HOME_X)
+
+    if REACT_MODE:
+        sys.stdout.write("\033[2;1Hl looks up, f flinches, p perks up, h pets it.")
+        show(bowl, HOME_X + BOWL_X * px, row, cell_w, BOWL_ID)
+        reactions = {"l": lambda: react("look_up", LOOK_HOLD_MS),
+                     "f": lambda: react("flinch", FLINCH_HOLD_MS),
+                     "p": lambda: react("perk_up", PERK_HOLD_MS),
+                     "h": pet}
+        i = 0
+        while True:
+            show(sit[i % len(sit)], HOME_X, row, cell_w)
+            key = key_pressed(SIT_MS / 1000)
+            if key == "q":
+                raise Quit
+            if key in reactions:
+                reactions[key]()
+            i += 1
 
     home = HOME_X
     start, far = BALL_START * cols * cell_w, cols * cell_w - BALL_MID * 2 * px
