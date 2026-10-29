@@ -2,7 +2,7 @@
 
 * What Stray does today, what has been tested, and what comes next.
 * A feature is complete only after it has run in a real terminal.
-* Last updated October 14, 2026.
+* Last updated October 28, 2026.
 
 ## Contents
 
@@ -22,24 +22,23 @@
 | 0 | An image test: a cat running along the bottom rows | Complete |
 | 1 | A wrapper you cannot notice | Complete, per user report on October 14 |
 | 2 | The image check, and the bar with a cat that sits still | Image check and basic row reservation implemented; terminal checks pending |
-| 3 | The prompt: sit, run down, come back when idle | Planned |
-| 4 | The cat's day and resting actions | Planned |
-| 5 | Commands to treat, pet, quiet, and name the cat | Planned |
-| 6 | A public release | Planned |
+| 3 | The cat's day, resting actions, and reactions | Planned |
+| 4 | Commands to treat, pet, quiet, and name the cat | Planned |
+| 5 | A public release | Planned |
 
 ```mermaid
 flowchart LR
     P0["0. Image test"] --> P1["1. Wrapper"]
     P1 --> P2["2. The bar"]
-    P2 --> P3["3. The prompt"]
-    P3 --> P4["4. The cat's day"]
-    P4 --> P5["5. Commands"]
-    P5 --> P6["6. Release"]
+    P2 --> P3["3. The cat's day"]
+    P3 --> P4["4. Commands"]
+    P4 --> P5["5. Release"]
 ```
 
 * Phase 0 is a throwaway test. Every later phase leaves Stray usable every day.
 * A phase is complete when its **Done when** line is true in kitty and in the VS Code terminal, on macOS.
-* On October 5, 2026 the plan was made simpler. Hours, trust stages, `stray stats`, and the habitat were dropped. The cat now sits on the prompt and keeps a daily schedule.
+* On October 5, 2026 the plan was made simpler. Hours, trust stages, `stray stats`, and the habitat were dropped. The cat now keeps a daily schedule.
+* On October 28, 2026 the prompt phase was dropped. The cat stays in the bar the whole time and reacts from there.
 
 ## Complete
 
@@ -115,36 +114,24 @@ flowchart LR
 
 ## Planned
 
-### Phase 3: The Prompt
-
-1. Add the prompt mark to the bash and zsh setup.
-2. Place the cat just after the `>` of the first prompt, only when the space is empty.
-3. On the first key, remove the cat and run it fast down to the home spot.
-4. After 30 seconds idle at the prompt, walk the cat along the bar and climb it up to the `>`.
-5. Send it back down on a key, output, or a resize.
-
-* **Done when:**
-  * Every new window shows the cat at the prompt, and no piece of it is left behind.
-  * Left idle, the cat comes back to the prompt after a clear and after a build.
-  * Typing while it climbs sends it back down, and the key still reaches the shell.
-
-### Phase 4: The Cat's Day
+### Phase 3: The Cat's Day
 
 1. Read the local time and turn it into meal, nap, night, or free time.
 2. Add the test setting that shifts the clock.
-3. Add the modes: at the prompt, home, watching, eating, and sleeping.
-4. Read the foreground program.
-5. Add the reactions for coding agents, long runs, and failed commands.
-6. Add the resting actions: sit, walk, play, and run.
-7. Draw the final frames, about 17 to 20, and the bowl.
+3. Add the modes: free, watching, eating, and sleeping.
+4. Add the resting actions: sit, walk, play, and run.
+5. Add the prompt mark to the bash and zsh setup, to know when a command failed.
+6. Read the foreground program.
+7. Add the reactions: looking up at a key, coding agents, long runs, and failed commands.
+8. Draw the rest of the frames in the style of the sleeping cat, and the bowl.
 
 * **Done when:**
   * With the clock shifted, the cat eats, naps, and sleeps at the right times, in every open window.
-  * A sleeping cat does not come to the prompt, and typing does not wake it.
-  * Inside Claude Code and `vim`, the cat never leaves the bar.
+  * Typing does not wake a sleeping cat.
+  * The cat looks up when you type, and flinches when a command fails.
   * Left alone for ten minutes in free time, the cat does each resting action.
 
-### Phase 5: Commands
+### Phase 4: Commands
 
 1. `stray treat` and `stray pet`. Each saves the time it was run, and each window reacts once.
 2. `stray quiet` and `stray come`.
@@ -155,12 +142,12 @@ flowchart LR
   * After `stray name mochi`, `mochi treat` works in a new window.
   * A name that is already a command is refused.
 
-### Phase 6: Release
+### Phase 5: Release
 
 * Publish `stray-cat` on crates.io.
 * A README with a short recording.
 * A Homebrew package and a license.
-* **Done when** a newcomer goes from install to a cat at their prompt in under two minutes.
+* **Done when** a newcomer goes from install to a cat in their terminal in under two minutes.
 
 ## Later Ideas
 
@@ -170,13 +157,14 @@ flowchart LR
 4. A bed, a toy, and other items in the bar.
 5. Other shells, such as fish.
 6. Testing iTerm2, Ghostty, and other terminals that pass the image check.
+7. Done notifications: a desktop notification when a long command or a coding agent finishes while you are away. See [Done Notifications](DESIGN.md#done-notifications).
 
 ## Known Risks
 
 * Details are in [Hard Parts](ARCHITECTURE.md#hard-parts).
 
 1. VS Code's image support is new. Placing frames by ID fails there, so Stray sends each frame again.
-2. The final frames are not drawn, and nobody is chosen to draw them.
+2. Only the sleeping and waking frames are drawn so far.
 3. kitty and VS Code may handle the scroll region differently.
 4. Coding agents redraw the screen often.
 5. The wrapper may slow typing.
@@ -184,15 +172,12 @@ flowchart LR
 7. Two rows may be too much in the short VS Code panel.
 8. Placeholders inside tmux may only work in kitty.
 9. Many tmux panes mean many bars, which may feel crowded.
-10. Prompts with text on the right may leave no room for the cat at the `>`.
 
 ## Open Questions
 
-1. Is 30 seconds the right idle time before the cat comes back to the prompt?
-2. Are the schedule times right?
-3. Should `stray quiet` give the two rows back to the shell?
-4. Who draws the final frames?
-5. Is two rows tall enough for the cat?
+1. Are the schedule times right?
+2. Should `stray quiet` give the two rows back to the shell?
+3. Is two rows tall enough for the cat?
 
 ## Test Record
 

@@ -9,10 +9,10 @@
 1. [Overview](#overview)
 2. [Key Terms](#key-terms)
 3. [The Screen](#the-screen)
-4. [At The Prompt](#at-the-prompt)
+4. [In The Bar](#in-the-bar)
 5. [The Cat's Day](#the-cats-day)
 6. [At Rest](#at-rest)
-7. [While Programs Run](#while-programs-run)
+7. [What It Notices](#what-it-notices)
 8. [The Cat's Look](#the-cats-look)
 9. [Commands](#commands)
 10. [Naming The Cat](#naming-the-cat)
@@ -27,7 +27,8 @@
 ## Overview
 
 * Stray is a small cat that lives in your terminal.
-* It sits on your prompt. When you type, it runs down to its spot at the bottom of the screen. When you stop, it comes back.
+* It lives in its own space at the bottom of the screen and never leaves it. It sleeps, wanders, and plays there.
+* It notices what you do: it looks up when you type, watches while programs run, and flinches when a command fails.
 * It keeps its own day by the clock: it eats, naps, and sleeps at set times.
 * You can give it a treat, pet it, and name it.
 
@@ -40,10 +41,9 @@
 | Term | Meaning |
 | --- | --- |
 | **Bar** | The bottom two rows of the terminal. They belong to the cat. |
-| **Home spot** | The right end of the bar, where the cat rests. |
+| **Home spot** | The left end of the bar, where the cat starts, sleeps, and keeps its bowl. |
 | **Prompt** | The line where your shell waits for a command. |
-| **Greeting** | The cat sitting on your prompt when a window opens. |
-| **Idle** | The shell is waiting at the prompt and you have not typed for a while. |
+| **Idle** | The shell is waiting at the prompt, and nothing has been typed or printed for a while. |
 | **Schedule** | The times of day the cat eats, naps, and sleeps. |
 | **Frame** | One small picture of the cat. |
 | **Image check** | Stray asking the terminal at launch whether it can show images. |
@@ -66,31 +66,28 @@
 ```
 
 * The cat is shown as text here. The real cat is a small image.
+* The bar has no line or border. It is empty rows with the cat in them, so the window looks like one normal terminal.
 * Programs never draw in the bar. They do not know it exists.
 * In a window too short to share, the bar turns off.
 
-## At The Prompt
+## In The Bar
 
 ```mermaid
 flowchart TD
     Open["You open a terminal"] --> Check{"Can this terminal<br/>show images?"}
     Check -->|No| Aside["Stray steps aside<br/>and your normal shell opens"]
     Check -->|Yes| Awake{"Is the cat awake?"}
-    Awake -->|No| Bed["It sleeps in the bar"]
-    Awake -->|Yes| Sit["The cat sits on the prompt"]
-    Sit --> Key{"You press any key"}
-    Key --> Run["It leaves the prompt before your key shows,<br/>and runs down to its home spot"]
-    Run --> Idle{"You go idle at the prompt"}
-    Idle --> Climb["It walks along the bar<br/>and climbs up to the prompt"]
-    Climb --> Sit
+    Awake -->|No| Bed["It sleeps at its home spot"]
+    Awake -->|Yes| Rest["It wanders the bar<br/>and picks a resting action"]
+    Rest --> Prog{"A program runs"}
+    Prog --> Watch["It stops and watches"]
+    Watch --> Back{"You are back at the prompt"}
+    Back --> Rest
 ```
 
-* The cat sits just after the `>` of your prompt and waits.
-* It runs as soon as you press a key. Your typing never lands under the cat.
-* After about 30 seconds idle at the prompt, it comes back up and sits on the `>` again.
-* It moves only through empty rows below the prompt. It never walks over your text.
-* It comes up only when the space after the `>` is empty and it is awake and not busy.
-* Output, a resize, or a program starting also sends it back down.
+* The cat never leaves the bar. It never walks over your text or sits where you type.
+* It can go anywhere along the bar, and it faces the way it walks.
+* When you type, it looks up for a moment, then goes on with what it was doing.
 
 ## The Cat's Day
 
@@ -102,33 +99,35 @@ flowchart TD
 | 1 to 3 pm | **Nap.** It sleeps in the bar. |
 | 6 to 7 pm | **Dinner.** It eats from its bowl in the bar. |
 | 11 pm to 7 am | **Night.** It sleeps in the bar. |
-| Any other time | **Free time.** It greets you, comes to the prompt, and picks a resting action. |
+| Any other time | **Free time.** It wanders the bar and picks a resting action. |
 
 * A meal lasts a few minutes, at the start of meal time or when you open a window during it. Then it is free time.
-* A sleeping cat stays in the bar. It does not greet you or come to the prompt, and typing does not wake it.
+* At meal and sleep times, the cat walks to its home spot first.
+* A sleeping cat stays at its home spot, and typing does not wake it.
 * The times are starting numbers in a settings file.
 
 ## At Rest
 
-* In free time, while it sits in the bar, the cat picks an action, does it for a while, then picks again.
+* In free time, the cat picks an action, does it for a while, then picks again.
 
 | Action | What You See | How Often |
 | --- | --- | --- |
 | **Sit** | Still, with a blink or tail flick. | Most of the time |
-| **Walk** | A stroll across the bar and back. | Sometimes |
+| **Walk** | A stroll to a new spot in the bar. | Sometimes |
 | **Play** | Bats at something, or pounces. | Sometimes |
 | **Run** | A dash from one end of the bar to the other. | Rarely |
 
-## While Programs Run
+## What It Notices
 
-* When anything other than your shell is running, the cat stays in the bar. Programs redraw the screen and would erase it.
+* Every reaction happens inside the bar. A sleeping cat does not react to any of them.
 
 | What Is Happening | What The Cat Does |
 | --- | --- |
+| You type at the prompt | Looks up for a moment. |
 | Output is scrolling by | Sits and watches. |
 | A program has run for a long time | Naps until you are back at the prompt. |
 | A coding agent stops and waits for you | Perks up. |
-| A command fails | Flinches. |
+| A command fails | Flinches. Not when you stopped it with Ctrl C. |
 | A full screen program such as `vim` is open | Sits still. |
 
 * tmux and ssh count as programs too. See [tmux And ssh](#tmux-and-ssh).
@@ -136,23 +135,30 @@ flowchart TD
 ## The Cat's Look
 
 * A single color silhouette, in the style of the RunCat menu bar cat, and a little bigger.
-* It fills the two rows of the bar, scaled to your font size.
+* It fills the bar, scaled to your font size.
 * It takes the color of your terminal's text.
 * It is drawn facing one way. Stray flips it to face the other.
 * The art is original. No frames are copied from RunCat.
 
-| Pose | Frames | Used For |
+| Pose | Status | Used For |
 | --- | --- | --- |
-| Running | About 5 | Running down from the prompt, and the run action. |
-| Walking | None of its own | The running frames, played slower. |
-| Climbing | 1 or 2 | Coming up to the prompt. |
-| Sitting | 1 or 2 | The prompt, resting, and watching. |
-| Eating | 2 | Meals and treats, with a small bowl. |
-| Sleeping | 2 | Naps and night. |
-| Playing | 3 or 4 | The play action. |
-| Reactions | 3 | Flinching, perking up, and being petted. |
+| Sleeping | Drawn, 27 frames | Naps and night. |
+| Waking | Drawn, 5 frames | Waking from a nap or at morning. |
+| Standing up | Drawn, 4 frames | Getting up into a sit after waking. |
+| Sitting | Drawn, 16 frames | Resting and watching. |
+| Sitting down | Drawn, 4 frames | Sitting down after a walk. Played backwards to get up. |
+| Walking | Drawn, 8 frames | The walk action, and going to the home spot. |
+| Running | Drawn, 8 frames | The run action, and chasing the ball. |
+| Leaning in | Drawn, 2 frames | Leaning from the sit down to the bowl. Played backwards to sit up. |
+| Eating | Drawn, 8 frames | Meals and treats, with its face in the bowl. |
+| Playing | Drawn, 15 frames | The play action: crouch, wiggle, pounce, and bat the ball. |
+| Reactions | Drawn, 15 frames | Looking up, flinching, perking up, and being petted. Each plays forward, then backward to settle. |
 
-* About 17 to 20 frames in total. None are drawn yet. The image test uses a placeholder cat.
+* Every pose uses the same cat as the sleeping frames.
+* The sprites live in `assets/sprites`, one folder per pose.
+* The bowl is its own image. It stays at the home spot, just past the sleeping cat's nose, and is drawn in front of the cat.
+* The cat scoots up to the bowl as it leans in to eat, and back as it sits up.
+* The ball is its own image too. It stays where it last rolled. The cat moves forward as it pounces.
 
 ## Commands
 
@@ -229,7 +235,7 @@ flowchart TD
 ## Rules That Do Not Change
 
 1. **The terminal comes first.** Every key reaches your shell before the cat reacts.
-2. **The cat never covers your work.** It leaves the bar only for the prompt, and only through empty space.
+2. **The cat never covers your work.** It never leaves the bar.
 3. **A broken Stray never locks you out.** If it cannot start, your normal shell opens. If it crashes later, your terminal is put back the way it was.
 4. **Easy to quiet, easy to remove.** One command each.
 5. **Nothing leaves your machine.** No network and no account.
@@ -244,12 +250,12 @@ flowchart TD
 | The cat's day follows the clock | Gives it a life with no saved data. | Every day is the same. |
 | Bar at the bottom | Scrolling back keeps working, and the prompt is usually just above. | In a fresh window the prompt is far from the bar. |
 | Bar is two rows | Room for the cat and its bowl. | Less space in short panels. |
+| No line around the bar | The terminal looks the same as without Stray, plus a cat. | Nothing shows where the shell's rows end. |
 | Stray runs your shell inside itself | The only way to animate while you type. | Harder to build. |
 | Image only, no text cat | A smooth cat and one way to draw. | Terminals without images get nothing. |
-| The cat runs at the first key | Your typing is never under the cat. | It never lingers at the prompt while you type. |
+| The cat always stays in the bar | It is never in your way, and programs cannot erase it. There is no need to find empty space on the screen. Much simpler to build. | It never visits your prompt. |
 | Keys only, not the mouse | Watching the mouse breaks text selection and clashes with programs like `vim`. | Moving the mouse does nothing. |
 | Commands start with `stray`, or the cat's name | Works in every shell. A name makes it personal. | No `/treat` style commands. |
-| Cat stays in the bar while programs run | Programs would erase it. | Less movement inside coding agents. |
 | Command `stray`, package `stray-cat` | The short name was taken. | Two names at install. |
 | One cat per screen with tmux and ssh | Two cats on one screen would fight over it. | A far machine never gets a cat of its own. |
 
@@ -261,11 +267,29 @@ flowchart TD
 * A bed, a toy, and other items in the bar.
 * Other shells, such as fish.
 * Testing iTerm2, Ghostty, and other terminals that pass the image check.
+* Done notifications. See below.
+
+### Done Notifications
+
+* A possible future addition, not planned in any phase yet.
+* When a long command or a coding agent finishes while you are away from the window, Stray sends a desktop notification. For example: "Mochi: cargo build finished", or "failed".
+* If you are watching the window, there is no notification. The cat just perks up in the bar.
+
+| Piece | How |
+| --- | --- |
+| The command finished | The prompt mark, which already says when the `>` is back and whether the command failed. |
+| It ran long enough | Time from when a program takes over to when the prompt is back. Only runs of about 10 seconds or more count, so `ls` never notifies. |
+| What it was | The foreground program's name, such as `cargo` or `claude`. |
+| An agent is waiting | A coding agent is in front and its output has gone quiet. A guess, not always right. |
+| You are away | Focus reporting: the terminal tells Stray when the window gains or loses focus. kitty and VS Code support it. |
+| The notification | kitty's desktop notification code. Terminals without it get the bell. |
+
+* `stray notify on` and `stray notify off` would turn it on and off.
+* Hard parts: programs such as `vim` and Claude Code turn on focus reporting for themselves, so Stray must pass those focus messages through only when the program asked for them. Notifications in VS Code are untested. tmux needs `focus-events on`.
+* Claude Code can already send its own notifications, so this helps most with builds, tests, and other long commands.
 
 ## Open Questions
 
-1. Is 30 seconds the right idle time before the cat comes back to the prompt?
-2. Are the schedule times right?
-3. Should `stray quiet` give the two rows back to the shell?
-4. Who draws the final frames?
-5. Is two rows tall enough for the cat, or should the bar be three?
+1. Are the schedule times right?
+2. Should `stray quiet` give the two rows back to the shell?
+3. Is two rows tall enough for the cat, or should the bar be three?
