@@ -1,5 +1,9 @@
-"""Build sleep, wake and run sprite frames from the smooth v3 animations.
+"""Build the sleep and wake sprite frames from the smooth v3 animations.
 
+This is kept as the record of how sleep and wake were made. Its source
+animations are not in the repo. The old run and leap are still built here,
+only to size the shared 309x215 canvas the same way; they are not saved.
+The run is drawn by draw_walk.py now.
 Every frame goes on one shared canvas, with the cat's feet on the same line,
 so a frame can be drawn at a fixed spot without lining anything up.
 Work happens in the sleep animation's pixel space, then shrinks at the end.
@@ -271,19 +275,17 @@ def save(name, frames, ms):
 
 sleep_out = save("sleep", [on_canvas(f, at) for f, at in sleep], 133)
 wake_out = save("wake", wake_frames, 70)
-run_out = save("run", [on_canvas(f, at) for f, at in run], 50)
-leap_out = save("leap", [on_canvas(f, at) for f, at in leap], 50)
 
-# still preview: first sleep frame, every wake frame, first four run frames
-row = sleep_out[:1] + wake_out + run_out[:4]
+# still preview: first sleep frame and every wake frame
+row = sleep_out[:1] + wake_out
 fw, fh = row[0].size
 sheet = Image.new("RGBA", ((fw + 6) * len(row), fh + 12), (30, 31, 38, 255))
 for i, f in enumerate(row):
     sheet.alpha_composite(f, (3 + i * (fw + 6), 6))
 sheet.save(scratch / "preview.png")
 
-# moving preview: two sleep loops, the wake, then running off to the right
-W = fw + 300
+# moving preview: two sleep loops, then the wake
+W = fw
 gif, durs = [], []
 
 
@@ -299,7 +301,5 @@ for _ in range(2):
         add(f, 0, 133)
 for f in wake_out:
     add(f, 0, 70)
-for i in range(26):
-    add(run_out[i % len(run_out)], i * 14, 50)
 gif[0].save(scratch / "stray-sequence-preview.gif", save_all=True,
             append_images=gif[1:], duration=durs, loop=0)
