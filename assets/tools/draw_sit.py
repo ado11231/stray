@@ -37,7 +37,9 @@ EYES = [(233, 115, 243, 132), (256, 116, 266, 133)]   # eye boxes in run_body.pn
 # chest: the front. leg_top: where the front legs start. tail_root, tail_len,
 # tail_start, tail_bend: the tail leaves here, this long, at this angle
 # (180 is straight back), turning this many degrees. head_turn: degrees the
-# head tips, below 0 nose down.
+# head tips, below 0 nose down. A pose can also move the paws (see PAWS):
+# paw and far_paw are the front paws, as x from leg_top and y, and hind_paw
+# is the back paw. Left out, the paws stand on the floor.
 SIT = dict(head=(178, 14), haunch=(157, 204, 55, 43, 90), chest=(160, 78, 236, 200),
            leg_top=(212, 140), tail_root=(124, 194), tail_len=95, tail_start=180, tail_bend=200, head_turn=0)
 # lying down with the head up, close to the last wake frame
@@ -80,6 +82,8 @@ SMOOTH = 7                       # px; dips in the outline narrower than this ge
 EARS = 40                        # px from the top of HEAD_BOX to the bottom of the ears
 BACK_IN = 0.12                   # how far in from each oval's top and bottom the back line runs
 FOOT = (12, 8)                   # half width and half height of the back foot
+# where the paws go when a pose does not say: all on the floor
+PAWS = dict(paw=(0, GROUND - PAW_R), far_paw=(0, GROUND - PAW_R), hind_paw=(HIND_PAW_X, GROUND - FOOT[1]))
 
 
 def big(xy):
@@ -119,10 +123,15 @@ def shut_eyes(head):
     return out
 
 
+def full(pose):
+    """The pose with the paws it left out standing on the floor."""
+    return {**PAWS, **pose}
+
+
 def blend(a, b, share, pace=None):
     """A pose part of the way from a to b. pace can give a part its own speed:
     below 1 it moves early, above 1 it moves late."""
-    pace = pace or {}
+    a, b, pace = full(a), full(b), pace or {}
     out = {}
     for key, start in a.items():
         end = b[key]
@@ -147,9 +156,8 @@ def draw_tail(draw, pose, sway):
         y = min(y, GROUND - TAIL_W[1] / 2)
 
 
-def draw_leg(draw, x, top_y, color, edge=None):
-    top = (x, top_y)
-    paw = (x, GROUND - PAW_R)
+def draw_leg(draw, top, paw, color, edge=None):
+    """A front leg from top down to paw."""
     if edge:
         draw.line([big(top), big(paw)], fill=edge, width=(LEG_W + 2) * SCALE)
         dot(draw, paw, PAW_R + 1, edge)
@@ -205,12 +213,11 @@ def draw_haunch(draw, haunch):
     draw.polygon(points, fill=WHITE)
 
 
-def draw_hind_leg(draw, haunch):
-    """A back leg from the middle of the haunch to a paw that stays put. As the
-    haunch comes down the leg folds, the hock pushing out behind, until the
-    haunch sits on it and covers it."""
+def draw_hind_leg(draw, haunch, paw):
+    """A back leg from the middle of the haunch to its paw. When the paw stays put
+    and the haunch comes down, the leg folds, the hock pushing out behind, until
+    the haunch sits on it and covers it."""
     hip = haunch_middle(haunch)
-    paw = (HIND_PAW_X, GROUND - FOOT[1])
     hock = joint(hip, paw)
     taper(draw, hip, hock, HIND_W[0], HIND_W[1])
     taper(draw, hock, paw, HIND_W[1], HIND_W[2])
@@ -281,13 +288,15 @@ def draw_bowl():
 
 
 def draw_frame(head, pose, sway=0):
+    pose = full(pose)
     im = Image.new("RGBA", big(CANVAS), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
     leg_x, leg_y = pose["leg_top"]
     draw_tail(draw, pose, sway)
     if pose["haunch"][1] < GROUND:
-        draw_hind_leg(draw, pose["haunch"])
-    draw_leg(draw, leg_x + FAR_LEG_DX, leg_y, FAR)
+        draw_hind_leg(draw, pose["haunch"], pose["hind_paw"])
+    far = pose["far_paw"]
+    draw_leg(draw, (leg_x + FAR_LEG_DX, leg_y), (leg_x + FAR_LEG_DX + far[0], far[1]), FAR)
     # the body and head go on their own layer, so their outline can be smoothed
     body = Image.new("RGBA", big(CANVAS), (0, 0, 0, 0))
     body_draw = ImageDraw.Draw(body)
@@ -297,7 +306,8 @@ def draw_frame(head, pose, sway=0):
     head, head_at = turn_head(head, pose)
     body.alpha_composite(head, head_at)
     im.alpha_composite(smooth(body, pose["head"][1] + EARS))
-    draw_leg(ImageDraw.Draw(im), leg_x, leg_y, WHITE, EDGE)
+    near = pose["paw"]
+    draw_leg(ImageDraw.Draw(im), (leg_x, leg_y), (leg_x + near[0], near[1]), WHITE, EDGE)
     im.alpha_composite(solid(head), head_at)   # the head stays in front of the leg
     return im.resize(CANVAS, Image.LANCZOS)
 
@@ -311,20 +321,22 @@ def save(name, frames):
         im.save(folder / f"{i:02d}.png")
 
 
-head = cut_head()
-blink = shut_eyes(head)
-frames = []
-for k in range(FRAMES):
-    sway = TAIL_SWAY * math.sin(2 * math.pi * k / FRAMES)
-    frames.append(draw_frame(blink if k in BLINK_AT else head, SIT, sway))
-save("sit", frames)
-save("stand", [draw_frame(head, blend(LOW, SIT, share)) for share in STAND])
-save("sit_down", [draw_frame(head, blend(STANDING, SIT, share, SIT_DOWN_PACE)) for share in SIT_DOWN])
-save("lean", [draw_frame(head, blend(SIT, EAT, share)) for share in LEAN])
-eat = []
-for k in range(EAT_FRAMES):
-    turn = 2 * math.pi * k / EAT_FRAMES
-    pose = dict(EAT, head=(EAT["head"][0], EAT["head"][1] + CHEW * (0.5 - 0.5 * math.cos(2 * turn))))
-    eat.append(draw_frame(head, pose, TAIL_SWAY * math.sin(turn)))
-save("eat", eat)
-save("bowl", [draw_bowl()])
+
+if __name__ == "__main__":
+    head = cut_head()
+    blink = shut_eyes(head)
+    frames = []
+    for k in range(FRAMES):
+        sway = TAIL_SWAY * math.sin(2 * math.pi * k / FRAMES)
+        frames.append(draw_frame(blink if k in BLINK_AT else head, SIT, sway))
+    save("sit", frames)
+    save("stand", [draw_frame(head, blend(LOW, SIT, share)) for share in STAND])
+    save("sit_down", [draw_frame(head, blend(STANDING, SIT, share, SIT_DOWN_PACE)) for share in SIT_DOWN])
+    save("lean", [draw_frame(head, blend(SIT, EAT, share)) for share in LEAN])
+    eat = []
+    for k in range(EAT_FRAMES):
+        turn = 2 * math.pi * k / EAT_FRAMES
+        pose = dict(EAT, head=(EAT["head"][0], EAT["head"][1] + CHEW * (0.5 - 0.5 * math.cos(2 * turn))))
+        eat.append(draw_frame(head, pose, TAIL_SWAY * math.sin(turn)))
+    save("eat", eat)
+    save("bowl", [draw_bowl()])
