@@ -3,7 +3,8 @@
 Usage: python3 play_in_kitty.py [rows] [react]
 The cat lives in the bottom rows, like the bar. It sleeps until you press
 any key, wakes, stands up and sits. Then it gets up and goes after its
-ball: it crouches, wiggles, pounces and bats it along the bar, a few times.
+ball: it crouches, wiggles, pounces and bats it along the bar, and runs
+after it when it rolls, a few times.
 Then it walks back home to the corner and eats from its bowl, and does it
 all again. When the ball gets to the far end, it is put back for the next go.
 Press q at any time to quit.
@@ -38,6 +39,8 @@ PURR_LOOPS = 4
 HOME_X = 0               # its spot in the bar: the bottom left corner
 SIT_LOOPS = 2            # times the sit plays before it moves on
 WALK_STRIDE = 0.330      # one walk loop covers this many image widths, from draw_walk.py
+RUN_STRIDE = 1.011       # and one run loop
+RUN_MS = 60
 BOWL_X = 301             # where the bowl sits from the cat's left edge, in sprite pixels, past the sleeping cat
 LEAN_STEP = (22, 44)     # sprite pixels the cat scoots toward the bowl in each lean frame
 EAT_STEP = 64            # and while it eats
@@ -111,6 +114,8 @@ def main():
     walk, sit_down = frames("walk"), frames("sit_down")
     lean, eat, bowl = frames("lean"), frames("eat"), frames("bowl")[0]
     crouch, wiggle, pounce, bat, ball = (frames(n) for n in ("crouch", "wiggle", "pounce", "bat", "ball"))
+    run = frames("run")
+    runs = {True: run, False: flipped(run)}
     # walk, sit down and sit, facing right (True) or left (False)
     facing = {True: (walk, sit_down, sit),
               False: (flipped(walk), flipped(sit_down), flipped(sit))}
@@ -134,14 +139,15 @@ def main():
             show(pose[i % len(pose)], x, row, cell_w)
             wait(ms)
 
-    def walk_to(x, to):
-        """Walk from x to the spot to, facing the way it goes. Returns where it stops."""
-        steps = facing[to > x][0]
+    def walk_to(x, to, running=False):
+        """Walk, or run, from x to the spot to, facing the way it goes. Returns where it stops."""
+        steps = runs[to > x] if running else facing[to > x][0]
+        size = RUN_STRIDE * img_w / len(run) if running else step
         i = 0
-        while abs(to - x) > step:
+        while abs(to - x) > size:
             show(steps[i % len(steps)], x, row, cell_w)
-            wait(WALK_MS)
-            x += step if to > x else -step
+            wait(RUN_MS if running else WALK_MS)
+            x += size if to > x else -size
             i += 1
         return to
 
@@ -236,10 +242,11 @@ def main():
             show_ball(ball_x, 0)
         play(sit_down[::-1], SIT_DOWN_MS, home)
         x = home
-        for _ in range(PLAY_ROUNDS):
+        for round_ in range(PLAY_ROUNDS):
             if ball_x >= far:
                 break
-            x = walk_to(x, spot_for(ball_x))
+            # it walks out to the ball, then runs after it once it rolls
+            x = walk_to(x, spot_for(ball_x), running=round_ > 0)
             x, ball_x = play_ball(x, ball_x, far)
         # home to eat, turning to face the bowl before it sits
         x = walk_to(x, home)
