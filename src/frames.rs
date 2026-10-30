@@ -18,6 +18,10 @@ const SPRITES: &[(&str, &[&[u8]])] = include!(concat!(env!("OUT_DIR"), "/sprites
 /// Red, green, blue, and how see-through.
 const BYTES_PER_PIXEL: usize = 4;
 
+/// Every frame is this many pixels tall, with the feet on the same row, so a spot in
+/// sprite pixels can be turned into a spot on screen.
+pub const CANVAS_HEIGHT: u32 = 215;
+
 /// A pose of the cat, or a thing in its bar. Each is named after its folder in
 /// `assets/sprites`. To add one, add it here, to `ALL`, and to `folder`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -187,7 +191,7 @@ mod tests {
     use super::*;
 
     /// Every frame shares one canvas, so a frame can be drawn at a fixed spot.
-    const CANVAS: (u32, u32) = (309, 215);
+    const CANVAS: (u32, u32) = (309, CANVAS_HEIGHT);
 
     const PALETTE: Palette = Palette {
         text: [200, 180, 160],

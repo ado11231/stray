@@ -1,5 +1,7 @@
+use super::scene::{CellSize, Scene};
 use super::shell_size;
 use crate::escape;
+use crate::frames::Frames;
 use crate::output_boundary::OutputBoundary;
 use portable_pty::PtySize;
 use std::io::{self, Write};
@@ -20,6 +22,11 @@ pub struct Output<W: Write> {
     pending: bool,
     /// The scroll region was changed, so it must be reset on exit.
     changed_region: bool,
+    /// The cat and its things. `None` when nothing is drawn, such as inside tmux for now,
+    /// where a picture would not follow its pane.
+    scene: Option<Scene>,
+    /// The size of a character cell in pixels, when the terminal reports it.
+    cell: Option<CellSize>,
 }
 
 impl<W: Write> Output<W> {
@@ -30,6 +37,7 @@ impl<W: Write> Output<W> {
         writer: W,
         size: PtySize,
         images_supported: bool,
+        inside_tmux: bool,
         cursor: Option<(u16, u16)>,
     ) -> io::Result<Self> {
         let shell = shell_size(size, images_supported);
@@ -41,6 +49,8 @@ impl<W: Write> Output<W> {
             terminal_size: size,
             pending: shell.rows != size.rows,
             changed_region: false,
+            scene: (images_supported && !inside_tmux).then(|| Scene::new(Frames::new(None))),
+            cell: cell_size(size),
         };
         if let Some(screen) = &mut output.screen {
             let last_row = shell.rows.saturating_sub(1);
@@ -64,6 +74,7 @@ impl<W: Write> Output<W> {
     pub fn resize(&mut self, size: PtySize) -> io::Result<PtySize> {
         let shell = shell_size(size, self.screen.is_some());
         self.terminal_size = size;
+        self.cell = cell_size(size);
         if let Some(screen) = &mut self.screen {
             screen.set_size(at_least_one(shell.rows), at_least_one(shell.cols));
             self.pending = self.changed_region || shell.rows != size.rows;
@@ -72,7 +83,8 @@ impl<W: Write> Output<W> {
         Ok(shell)
     }
 
-    /// Sends the scroll region, but only when no sequence or synchronized update is open.
+    /// Sends the scroll region and draws the bar, but only when no sequence or synchronized
+    /// update is open.
     fn apply_region(&mut self) -> io::Result<()> {
         if !self.pending || !self.boundary.ready() {
             return Ok(());
@@ -91,8 +103,15 @@ impl<W: Write> Output<W> {
             self.writer
                 .write_all(escape::move_cursor(rows + 1, 1).as_bytes())?;
             self.writer.write_all(escape::CLEAR_BELOW)?;
+            if let Some(scene) = &mut self.scene {
+                scene.draw(&mut self.writer, rows + 1, self.cell)?;
+            }
         } else {
             self.writer.write_all(escape::RESET_SCROLL_REGION)?;
+            // The window is too short for the bar, so the cat goes away until it grows.
+            if let Some(scene) = &mut self.scene {
+                scene.clear(&mut self.writer)?;
+            }
         }
         if self.boundary.origin() {
             self.writer.write_all(escape::ORIGIN_MODE_ON)?;
@@ -108,6 +127,11 @@ impl<W: Write> Output<W> {
 fn restore_cursor(writer: &mut impl Write, screen: &vt100::Screen) -> io::Result<()> {
     writer.write_all(screen.cursor_state_formatted().as_bytes())?;
     writer.write_all(screen.attributes_formatted().as_bytes())
+}
+
+/// The size of a character cell, when the terminal reports the window's size in pixels.
+fn cell_size(size: PtySize) -> Option<CellSize> {
+    CellSize::from_window(size.cols, size.rows, size.pixel_width, size.pixel_height)
 }
 
 /// The screen copy needs at least one row and column, even in a window with none.
@@ -139,6 +163,9 @@ impl<W: Write> Drop for Output<W> {
         // Runs on every exit path, including panics, so errors are ignored.
         for sequence in escape::RESTORE_TERMINAL {
             let _ = self.writer.write_all(sequence);
+        }
+        if let Some(scene) = &mut self.scene {
+            let _ = scene.clear(&mut self.writer);
         }
         if let Some(parser) = &self.screen {
             let _ = restore_cursor(&mut self.writer, parser.screen());

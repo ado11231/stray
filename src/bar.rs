@@ -3,6 +3,7 @@
 use portable_pty::PtySize;
 
 mod output;
+mod scene;
 pub use output::Output;
 
 /// Rows kept free at the bottom of the terminal for the cat.

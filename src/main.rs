@@ -98,7 +98,8 @@ fn start(shell: Option<OsString>, login: bool) -> Result<ExitCode> {
     }
 
     let command = wrapper::build_shell_command(&shell_path, login);
-    match wrapper::ShellSession::start_with_bar(command, check.supported, check.cursor) {
+    match wrapper::ShellSession::start_with_bar(command, check.supported, inside_tmux, check.cursor)
+    {
         Ok(session) => session.run_with_input(check.input),
         Err(error) => fall_back(&error, &shell_path, login),
     }
