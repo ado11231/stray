@@ -1,9 +1,13 @@
 //! The startup script that `stray init` prints for bash and zsh.
 
 use crate::Shell;
+use stray_cat::escape::PROMPT_MARK;
 
 /// Replaced with the quoted path to the stray program.
 const EXECUTABLE_PLACEHOLDER: &str = "@STRAY_EXECUTABLE@";
+
+/// Replaced with the OSC number of the prompt mark.
+const PROMPT_MARK_PLACEHOLDER: &str = "@STRAY_PROMPT_MARK@";
 
 /// Returns the startup script for `shell`, set up to run `executable`.
 pub fn init_script(shell: Shell, executable: &str) -> String {
@@ -11,7 +15,9 @@ pub fn init_script(shell: Shell, executable: &str) -> String {
         Shell::Bash => include_str!("shell/bash.sh"),
         Shell::Zsh => include_str!("shell/zsh.sh"),
     };
-    script.replace(EXECUTABLE_PLACEHOLDER, &quote(executable))
+    script
+        .replace(EXECUTABLE_PLACEHOLDER, &quote(executable))
+        .replace(PROMPT_MARK_PLACEHOLDER, PROMPT_MARK)
 }
 
 /// Wraps a value in single quotes, so the shell reads it exactly as written.
@@ -25,6 +31,7 @@ mod tests {
     use crate::wrapper::{SHELL_MARKER, ShellGuard, forward_output};
     use anyhow::{Context, Result};
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+    use std::io::Write;
     use std::process::Command;
     use std::time::Duration;
     use stray_cat::env;
@@ -201,5 +208,92 @@ mod tests {
             assert_eq!(output.stdout, path.as_bytes());
         }
         Ok(())
+    }
+
+    /// Starts `shell` as Stray's own inner shell with the startup script in its settings
+    /// file, types each line of `lines`, and returns the exit status in every prompt mark.
+    fn prompt_marks(shell: Shell, lines: &[&str]) -> Result<Vec<String>> {
+        let folder = std::env::temp_dir().join(format!(
+            "stray-prompt-mark-{}-{}",
+            std::process::id(),
+            shell_path(shell).replace('/', "-")
+        ));
+        std::fs::create_dir_all(&folder)?;
+        let settings = folder.join(match shell {
+            Shell::Bash => "bashrc",
+            Shell::Zsh => ".zshrc",
+        });
+        std::fs::write(&settings, init_script(shell, FAKE_EXECUTABLE))?;
+
+        let pty = native_pty_system().openpty(PtySize::default())?;
+        let reader = pty.master.try_clone_reader()?;
+        let mut writer = pty.master.take_writer()?;
+        let mut command = CommandBuilder::new(shell_path(shell));
+        if matches!(shell, Shell::Bash) {
+            command.args(["--noprofile", "--rcfile"]);
+            command.arg(&settings);
+        }
+        command.arg("-i");
+        command.env("ZDOTDIR", &folder);
+        command.env("HISTFILE", folder.join("history"));
+        command.env("PATH", "/bin:/usr/bin");
+        let tty_name = pty
+            .master
+            .tty_name()
+            .context("test terminal should have a name")?;
+        command.env(SHELL_MARKER, tty_name);
+        let mut child = ShellGuard {
+            child: pty.slave.spawn_command(command)?,
+        };
+        drop(pty.slave);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = forward_output(reader, &mut bytes).map(|()| bytes);
+            let _ = sender.send(result);
+        });
+        // Each line waits for the shell to settle, as a person typing would.
+        for line in lines.iter().chain(&["exit"]) {
+            std::thread::sleep(Duration::from_millis(300));
+            writer.write_all(format!("{line}\r").as_bytes())?;
+        }
+        let bytes = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .context("the shell did not exit")??;
+        child.child.wait()?;
+        std::fs::remove_dir_all(&folder)?;
+
+        let text = String::from_utf8_lossy(&bytes);
+        let start = format!("\x1b]{PROMPT_MARK};");
+        Ok(text
+            .split(start.as_str())
+            .skip(1)
+            .filter_map(|after| after.split_once('\x07'))
+            .map(|(status, _)| status.to_owned())
+            .collect())
+    }
+
+    #[test]
+    fn the_inner_shell_marks_each_prompt_after_a_command() -> Result<()> {
+        for shell in SHELLS {
+            let marks = prompt_marks(shell, &["false", "", "true"])?;
+            // The empty line ran nothing, so it has no mark.
+            assert_eq!(marks, ["1", "0"], "{}", shell_path(shell));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_outer_shell_has_no_prompt_mark() {
+        for shell in SHELLS {
+            let script = init_script(shell, FAKE_EXECUTABLE);
+            // The marks live only inside the block for Stray's own shell.
+            let (outer, inner) = script
+                .split_once("Inside Stray's own shell")
+                .unwrap_or((&script, ""));
+            assert!(!outer.contains(PROMPT_MARK), "{}", shell_path(shell));
+            assert!(inner.contains(PROMPT_MARK), "{}", shell_path(shell));
+        }
     }
 }

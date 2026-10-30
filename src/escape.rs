@@ -39,6 +39,10 @@ pub const CURSOR_POSITION_QUERY: &[u8] = b"\x1b[6n";
 /// of a group of questions.
 pub const DEVICE_ATTRIBUTES_QUERY: &[u8] = b"\x1b[c";
 
+/// The OSC number of the prompt mark. Stray's shell prints `ESC ] 7701 ; status BEL`
+/// before each prompt, after a command ran. Terminals ignore OSC numbers they do not know.
+pub const PROMPT_MARK: &str = "7701";
+
 /// Starts a message that tmux passes on to the outer terminal.
 pub const TMUX_PASSTHROUGH_START: &[u8] = b"\x1bPtmux;";
 

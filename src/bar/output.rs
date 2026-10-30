@@ -111,6 +111,9 @@ impl<W: Write> Output<W> {
             return Ok(());
         }
         let events = self.boundary.take_events();
+        if let Some(status) = events.command_status {
+            self.cat.command_finished(status, Instant::now());
+        }
         let Some(parser) = &self.screen else {
             return Ok(());
         };

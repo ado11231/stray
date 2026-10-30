@@ -249,6 +249,25 @@ impl Plan {
         self.sit()
     }
 
+    /// From sitting, flinches, holds it for `hold`, and settles back to sitting.
+    pub fn flinch(mut self, hold: Duration) -> Self {
+        self.play(Pose::Flinch, false);
+        let frame_time = Pose::Flinch.frame_time().as_millis().max(1);
+        let frames = usize::try_from(hold.as_millis() / frame_time).unwrap_or(1);
+        self.steps.push(Step {
+            pose: Pose::Flinch,
+            facing: self.facing,
+            // Played backward, the first frame shown is the last one: the flinch itself.
+            backward: true,
+            frames: Some(frames.max(1)),
+            x: self.x,
+            move_per_frame: 0,
+            still: true,
+        });
+        self.play(Pose::Flinch, true);
+        self.sit()
+    }
+
     /// From sitting, lies down and falls asleep: getting up from a nap, played backward.
     pub fn sleep(mut self) -> Self {
         self.play(Pose::Stand, true);

@@ -27,6 +27,12 @@ const MEAL_LENGTH: Duration = Duration::from_secs(3 * 60);
 /// How long the cat keeps looking up after the last key.
 const LOOK_HOLD: Duration = Duration::from_millis(900);
 
+/// How long the cat holds its flinch when a command fails.
+const FLINCH_HOLD: Duration = Duration::from_millis(300);
+
+/// The exit status of a command stopped with Ctrl C. The cat does not flinch at it.
+const CTRL_C_STATUS: i32 = 130;
+
 /// How long the cat sits still in free time before it picks a resting action, in seconds.
 /// Short enough that it does each action within about ten minutes.
 const REST_SECONDS: RangeInclusive<u64> = 5..=20;
@@ -133,6 +139,20 @@ impl Cat {
         if step.pose == Pose::Sit {
             self.follow(Plan::from(step.x, step.facing).look_up(), now);
         }
+    }
+
+    /// A command finished with `status` and the prompt is back. A sitting cat flinches when
+    /// the command failed, unless it was stopped with Ctrl C.
+    pub fn command_finished(&mut self, status: i32, now: Instant) {
+        let failed = status != 0 && status != CTRL_C_STATUS;
+        // Typing the command made the cat look up, so it may still be looking.
+        let sitting = self.settled() || self.looking_up();
+        if !failed || self.mode != Mode::Free || !sitting {
+            return;
+        }
+        let step = *self.step();
+        self.rest_until = None;
+        self.follow(Plan::from(step.x, step.facing).flinch(FLINCH_HOLD), now);
     }
 
     /// Moves the cat on to `now`: finishes steps that are done, and when it is settled,
@@ -599,5 +619,46 @@ mod tests {
         let later = start + Duration::from_secs(10 * 60);
         let (poses, _) = watch(&mut cat, later, Duration::from_secs(10 * 60));
         assert!(poses.iter().any(|pose| *pose != Pose::Sit));
+    }
+
+    #[test]
+    fn a_failed_command_makes_the_cat_flinch() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.command_finished(1, start);
+        let (poses, _) = watch(&mut cat, start, Duration::from_secs(2));
+        assert!(poses.contains(&Pose::Flinch));
+        assert_eq!(poses.last(), Some(&Pose::Sit));
+    }
+
+    #[test]
+    fn the_cat_flinches_even_while_looking_up_at_the_keys() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.key_pressed(start);
+        let (_, _) = watch(&mut cat, start, Duration::from_millis(300));
+        let now = start + Duration::from_millis(300);
+        cat.command_finished(2, now);
+        assert_eq!(cat.sprite(now).pose, Pose::Flinch);
+    }
+
+    #[test]
+    fn success_and_ctrl_c_do_not_make_the_cat_flinch() {
+        let start = Instant::now();
+        for status in [0, CTRL_C_STATUS] {
+            let mut cat = free_cat(start, 1);
+            cat.command_finished(status, start);
+            let (poses, _) = watch(&mut cat, start, Duration::from_secs(2));
+            assert!(!poses.contains(&Pose::Flinch), "status {status}");
+        }
+    }
+
+    #[test]
+    fn a_sleeping_cat_does_not_flinch() {
+        let start = Instant::now();
+        let mut cat = cat_at(2, 0, start);
+        cat.command_finished(1, start);
+        let (poses, _) = watch(&mut cat, start, Duration::from_secs(2));
+        assert!(poses.iter().all(|pose| *pose == Pose::Sleep));
     }
 }
