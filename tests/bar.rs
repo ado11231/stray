@@ -44,7 +44,8 @@ fn size(rows: u16) -> PtySize {
 #[test]
 fn scrolling_leaves_the_bar_empty_and_preserves_the_programs_saved_cursor() -> Result {
     let writer = Writer::default();
-    let mut terminal = vt100::Parser::new(24, 80, 0);
+    // The default size is 24 rows and 80 columns, the same as `size(24)`.
+    let mut terminal = vt100::Parser::default();
     terminal.process(b"\x1b[6;7H\x1b7\x1b[8;9H");
     let mut output = Output::new(writer.clone(), size(24), true, Some((7, 8)))?;
     terminal.process(&writer.take());

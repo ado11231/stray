@@ -3,6 +3,7 @@ use crate::escape;
 use crate::output_boundary::OutputBoundary;
 use portable_pty::PtySize;
 use std::io::{self, Write};
+use std::num::NonZeroU16;
 
 /// Writes shell output to the terminal and keeps the bar rows out of the scroll region.
 ///
@@ -35,7 +36,7 @@ impl<W: Write> Output<W> {
         let mut output = Self {
             writer,
             screen: images_supported
-                .then(|| vt100::Parser::new(shell.rows.max(1), shell.cols.max(1), 0)),
+                .then(|| vt100::Parser::new(at_least_one(shell.rows), at_least_one(shell.cols), 0)),
             boundary: OutputBoundary::default(),
             terminal_size: size,
             pending: shell.rows != size.rows,
@@ -64,9 +65,7 @@ impl<W: Write> Output<W> {
         let shell = shell_size(size, self.screen.is_some());
         self.terminal_size = size;
         if let Some(screen) = &mut self.screen {
-            screen
-                .screen_mut()
-                .set_size(shell.rows.max(1), shell.cols.max(1));
+            screen.set_size(at_least_one(shell.rows), at_least_one(shell.cols));
             self.pending = self.changed_region || shell.rows != size.rows;
             self.apply_region()?;
         }
@@ -82,7 +81,7 @@ impl<W: Write> Output<W> {
             return Ok(());
         };
         let screen = parser.screen();
-        let rows = screen.size().0;
+        let rows = screen.size().0.get();
         self.changed_region = true;
         self.writer.write_all(escape::ORIGIN_MODE_OFF)?;
         if rows < self.terminal_size.rows {
@@ -107,8 +106,13 @@ impl<W: Write> Output<W> {
 
 /// Puts back the shell's cursor position and text style, which changing the region resets.
 fn restore_cursor(writer: &mut impl Write, screen: &vt100::Screen) -> io::Result<()> {
-    writer.write_all(&screen.cursor_state_formatted())?;
-    writer.write_all(&screen.attributes_formatted())
+    writer.write_all(screen.cursor_state_formatted().as_bytes())?;
+    writer.write_all(screen.attributes_formatted().as_bytes())
+}
+
+/// The screen copy needs at least one row and column, even in a window with none.
+fn at_least_one(size: u16) -> NonZeroU16 {
+    NonZeroU16::new(size).unwrap_or(NonZeroU16::MIN)
 }
 
 impl<W: Write> Write for Output<W> {
