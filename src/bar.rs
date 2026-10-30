@@ -11,7 +11,7 @@ pub use output::Output;
 const BAR_ROWS: u16 = 2;
 
 /// Shorter terminals keep every row for the shell and show no bar.
-const MIN_TERMINAL_ROWS: u16 = 10;
+pub const MIN_TERMINAL_ROWS: u16 = 10;
 
 /// What the image check found out about the terminal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

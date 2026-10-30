@@ -39,6 +39,9 @@ const RGB_PREFIX: &[u8] = b"rgb:";
 /// A color channel in a reply has at most this many hex digits.
 const MAX_HEX_DIGITS: usize = 4;
 
+/// Color channels are written in hex.
+const HEX: u32 = 16;
+
 /// Each hex digit holds 4 bits.
 const BITS_PER_HEX_DIGIT: usize = 4;
 
@@ -270,7 +273,7 @@ fn parse_channel(digits: &[u8]) -> Option<u8> {
     if digits.is_empty() || digits.len() > MAX_HEX_DIGITS {
         return None;
     }
-    let value = u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()?;
+    let value = u32::from_str_radix(std::str::from_utf8(digits).ok()?, HEX).ok()?;
     let max = (1 << (BITS_PER_HEX_DIGIT * digits.len())) - 1;
     let byte_max = u32::from(u8::MAX);
     u8::try_from((value * byte_max + max / 2) / max).ok()
@@ -405,15 +408,24 @@ mod tests {
         let mut direct = Vec::new();
         write_query(&mut direct, false)?;
         assert!(direct.windows(3).any(|bytes| bytes == b"a=q"));
-        assert!(direct.ends_with(b"\x1b\\\x1b[6n\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[c"));
+        let colors = [TEXT_COLOR_QUERY, BACKGROUND_COLOR_QUERY].concat();
+        let after_graphics = [
+            STRING_END,
+            CURSOR_POSITION_QUERY,
+            &colors,
+            DEVICE_ATTRIBUTES_QUERY,
+        ]
+        .concat();
+        assert!(direct.ends_with(&after_graphics));
 
         let mut tmux = Vec::new();
         write_query(&mut tmux, true)?;
-        let questions = [graphics_query().as_bytes(), b"\x1b[c"].concat();
+        let questions = [graphics_query().as_bytes(), DEVICE_ATTRIBUTES_QUERY].concat();
         assert_eq!(
             tmux,
             [
-                b"\x1b[6n\x1b]10;?\x1b\\\x1b]11;?\x1b\\".as_slice(),
+                CURSOR_POSITION_QUERY,
+                &colors,
                 &tmux_passthrough(&questions)
             ]
             .concat()

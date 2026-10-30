@@ -1,3 +1,5 @@
+//! Tests the image check in a real Stray process, with the test acting as the terminal.
+
 #![cfg(unix)]
 
 use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};

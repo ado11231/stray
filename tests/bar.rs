@@ -1,9 +1,11 @@
+//! Tests the bar's output on its own, with a fake terminal that records every byte.
+
 use portable_pty::PtySize;
 use std::cell::RefCell;
 use std::io::{self, Write};
 use std::rc::Rc;
 use stray_cat::bar::{Output, Setup};
-use stray_cat::escape::{RESET_SCROLL_REGION, RESTORE_TERMINAL};
+use stray_cat::escape::{self, RESET_SCROLL_REGION, RESTORE_TERMINAL};
 use stray_cat::frames::Palette;
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -84,13 +86,17 @@ fn resizing_across_the_height_boundary_updates_the_region() -> Result {
     let writer = Writer::default();
     let mut output = Output::new(writer.clone(), size(24), BAR)?;
     writer.take();
-    for (rows, expected, region) in [
-        (9, 9, "\x1b[r"),
-        (10, 8, "\x1b[1;8r"),
-        (40, 38, "\x1b[1;38r"),
-    ] {
-        assert_eq!(output.resize(size(rows))?.rows, expected);
-        assert!(contains(&writer.take(), region.as_bytes()));
+    for (rows, shell_rows) in [(9, 9), (10, 8), (40, 38)] {
+        assert_eq!(output.resize(size(rows))?.rows, shell_rows);
+        let written = writer.take();
+        if shell_rows < rows {
+            assert!(contains(
+                &written,
+                escape::scroll_region(shell_rows).as_bytes()
+            ));
+        } else {
+            assert!(contains(&written, RESET_SCROLL_REGION));
+        }
     }
     drop(output);
     assert!(contains(&writer.take(), RESET_SCROLL_REGION));
@@ -147,6 +153,9 @@ fn unwinding_restores_the_full_region_even_after_incomplete_output() -> Result {
     Ok(())
 }
 
+/// The rows the shell gets in a 24 row window, with the bar below them.
+const SHELL_ROWS: u16 = 22;
+
 /// How many pictures the bar shows: the cat tree, the bowl, and the cat.
 const PICTURES_IN_BAR: usize = 3;
 
@@ -168,7 +177,8 @@ fn the_cat_and_its_things_are_drawn_in_the_bar_and_removed_on_exit() -> Result {
     let bytes = writer.take();
     assert_eq!(count(&bytes, SHOW), PICTURES_IN_BAR);
     // The cat tree starts the first bar row, just below the 22 shell rows.
-    assert!(contains(&bytes, &[b"\x1b[23;1H".as_slice(), SHOW].concat()));
+    let first_bar_row = escape::move_cursor(SHELL_ROWS + 1, 1);
+    assert!(contains(&bytes, &[first_bar_row.as_bytes(), SHOW].concat()));
     drop(output);
     assert_eq!(count(&writer.take(), REMOVE), PICTURES_IN_BAR);
     Ok(())
@@ -200,15 +210,15 @@ fn inside_tmux_the_rows_are_kept_but_nothing_is_drawn_yet() -> Result {
         },
     )?;
     let bytes = writer.take();
-    assert!(contains(&bytes, b"\x1b[1;22r"));
+    assert!(contains(
+        &bytes,
+        escape::scroll_region(SHELL_ROWS).as_bytes()
+    ));
     assert_eq!(count(&bytes, SHOW), 0);
     drop(output);
     assert_eq!(count(&writer.take(), REMOVE), 0);
     Ok(())
 }
-
-/// The scroll region Stray sets in a 24 row window.
-const REGION: &[u8] = b"\x1b[1;22r";
 
 #[test]
 fn clears_resets_and_full_screen_switches_draw_the_bar_again() -> Result {
@@ -227,7 +237,10 @@ fn clears_resets_and_full_screen_switches_draw_the_bar_again() -> Result {
         writer.take();
         output.write_all(bytes)?;
         let written = writer.take();
-        assert!(contains(&written, REGION), "{bytes:?}");
+        assert!(
+            contains(&written, escape::scroll_region(SHELL_ROWS).as_bytes()),
+            "{bytes:?}"
+        );
         assert_eq!(count(&written, SHOW), PICTURES_IN_BAR, "{bytes:?}");
     }
     Ok(())
@@ -243,7 +256,11 @@ fn everyday_output_leaves_the_bar_alone() -> Result {
     output.write_all(b"hello\r\n\x1b[J\x1b[5;10r\x1b[r\x1b[1;22r\x1b[22;1H")?;
     let written = writer.take();
     assert_eq!(count(&written, SHOW), 0);
-    assert_eq!(count(&written, REGION), 1, "only the program's own region");
+    assert_eq!(
+        count(&written, escape::scroll_region(SHELL_ROWS).as_bytes()),
+        1,
+        "only the program's own region"
+    );
     Ok(())
 }
 

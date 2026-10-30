@@ -1,3 +1,5 @@
+//! Passes the shell's output to the terminal and keeps the bar safe from it.
+
 use super::scene::{CellSize, Scene};
 use super::{Setup, shell_size};
 use crate::escape;
