@@ -50,7 +50,7 @@ LOW = dict(head=(196, 110), haunch=(131, 204, 66, 37, 0), chest=(140, 142, 256, 
 STANDING = dict(head=(193, 42), haunch=(102, 170, 62, 38, 0), chest=(104, 86, 252, 158),
                 leg_top=(212, 148), tail_root=(58, 108), tail_len=60, tail_start=105, tail_bend=100, head_turn=0)
 # leaning over the bowl to eat, the head tipped down
-EAT = dict(head=(204, 100), haunch=(150, 204, 52, 42, 75), chest=(166, 118, 262, 204),
+EAT = dict(head=(204, 90), haunch=(150, 204, 52, 42, 75), chest=(166, 118, 262, 204),
            leg_top=(236, 164), tail_root=(118, 196), tail_len=95, tail_start=180, tail_bend=200, head_turn=-10)
 
 LEG_W = 20
@@ -60,7 +60,7 @@ TAIL_W = (20, 16)
 TAIL_SWAY = 10                   # degrees the tip sways
 
 FRAMES = 16
-LEAN = [0.35, 0.7]               # share of the way from SIT to EAT in each lean down frame
+LEAN = [0.25, 0.5, 0.75]             # share of the way from SIT to EAT in each lean down frame
 EAT_FRAMES = 8
 CHEW = 3                         # px the head bobs while it eats
 
