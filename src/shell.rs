@@ -22,12 +22,12 @@ fn quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env;
     use crate::wrapper::{SHELL_MARKER, ShellGuard, forward_output};
     use anyhow::{Context, Result};
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
     use std::process::Command;
     use std::time::Duration;
+    use stray_cat::env;
 
     const SHELLS: [Shell; 2] = [Shell::Bash, Shell::Zsh];
 

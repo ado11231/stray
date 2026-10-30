@@ -1,6 +1,5 @@
 //! The `stray` command: installs the startup line and wraps the shell in a PTY.
 
-mod env;
 mod image_check;
 mod install;
 mod shell;
@@ -12,7 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::ExitCode;
-use stray_cat::bar;
+use stray_cat::{bar, env};
 
 #[derive(Parser)]
 #[command(name = "stray", version, about)]

@@ -2,6 +2,7 @@
 
 pub mod bar;
 pub mod cat;
+pub mod env;
 pub mod escape;
 pub mod frames;
 pub mod image;
