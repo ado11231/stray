@@ -22,7 +22,7 @@
 | 0 | An image test: a cat running along the bottom rows | Complete |
 | 1 | A wrapper you cannot notice | Complete, per user report on October 14 |
 | 2 | The image check, and the bar with a cat that sits still | Image check and basic row reservation implemented; terminal checks pending |
-| 3 | The cat's day, resting actions, and reactions | Done in code October 30, 2026; terminal checks pending |
+| 3 | The cat's day, resting actions, and reactions | Done in code October 30, 2026; mostly checked in kitty, VS Code pending |
 | 4 | Commands to treat, pet, quiet, and name the cat | Planned |
 | 5 | A public release | Planned |
 
@@ -106,8 +106,10 @@ flowchart LR
 
 ### Phase 3: The Cat's Day
 
-* Done in code October 30, 2026. Some steps were tried in a real terminal as they
-  were built. The full checklist is still pending: see [Phase 3 testing](PHASE3-TESTING.md).
+* Done in code October 30, 2026. Most of the checklist passed in kitty. What is left
+  is in issues [#16](https://github.com/ado11231/stray/issues/16),
+  [#17](https://github.com/ado11231/stray/issues/17), and
+  [#18](https://github.com/ado11231/stray/issues/18). See [Phase 3 testing](PHASE3-TESTING.md).
 
 1. Read the local time and turn it into meal, nap, night, or free time. Done.
 2. Add the test setting that shifts the clock. Done: `STRAY_CLOCK` and `STRAY_CLOCK_SPEED`.
@@ -196,6 +198,21 @@ flowchart LR
   that they worked: the cat moves on its own, looks up while typing, flinches at a
   failed command, and perks up when Claude Code waits. The terminal was not
   recorded, and the full checklist has not been run.
+
+#### kitty, macOS, zsh
+
+| Check | Result |
+| --- | --- |
+| Breakfast at speed 60: walks to the bowl, turns, eats, sits | Passed |
+| Nap: sleeps, typing and `false` do not wake it, wakes after 2 minutes | Passed |
+| Dinner into night at speed 600, and a new window at night starts asleep | Passed |
+| Walking | Stuttered at the start and end. Fixed by placing frames with a pixel offset, then passed |
+| Looks up while typing, flinches on `false` | Passed |
+| `sleep 10` at speed 60: watches, then naps, wakes at the prompt | Passed |
+| `claude`: stays awake, perks up when it waits | First napped, because npm's file is `claude.exe`. Fixed, then passed |
+| Free time for ten minutes | Not run: [#16](https://github.com/ado11231/stray/issues/16) |
+| `vim`, Ctrl C, and an empty Enter | Not run: [#17](https://github.com/ado11231/stray/issues/17) |
+| The whole checklist in VS Code | Not run: [#18](https://github.com/ado11231/stray/issues/18) |
 
 ### Phase 2: October 14, 2026, Image Check
 
