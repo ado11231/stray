@@ -1,5 +1,5 @@
 use super::scene::{CellSize, Scene};
-use super::shell_size;
+use super::{Setup, shell_size};
 use crate::escape;
 use crate::frames::Frames;
 use crate::output_boundary::OutputBoundary;
@@ -31,15 +31,13 @@ pub struct Output<W: Write> {
 
 impl<W: Write> Output<W> {
     /// Starts output and reserves the bar rows when images are supported.
-    ///
-    /// `cursor` is the 0-based cursor position from the image check, if the terminal sent one.
-    pub fn new(
-        writer: W,
-        size: PtySize,
-        images_supported: bool,
-        inside_tmux: bool,
-        cursor: Option<(u16, u16)>,
-    ) -> io::Result<Self> {
+    pub fn new(writer: W, size: PtySize, setup: Setup) -> io::Result<Self> {
+        let Setup {
+            images_supported,
+            inside_tmux,
+            cursor,
+            palette,
+        } = setup;
         let shell = shell_size(size, images_supported);
         let mut output = Self {
             writer,
@@ -49,7 +47,7 @@ impl<W: Write> Output<W> {
             terminal_size: size,
             pending: shell.rows != size.rows,
             changed_region: false,
-            scene: (images_supported && !inside_tmux).then(|| Scene::new(Frames::new(None))),
+            scene: (images_supported && !inside_tmux).then(|| Scene::new(Frames::new(palette))),
             cell: cell_size(size),
         };
         if let Some(screen) = &mut output.screen {

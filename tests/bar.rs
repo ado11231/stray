@@ -2,8 +2,9 @@ use portable_pty::PtySize;
 use std::cell::RefCell;
 use std::io::{self, Write};
 use std::rc::Rc;
-use stray_cat::bar::Output;
+use stray_cat::bar::{Output, Setup};
 use stray_cat::escape::{RESET_SCROLL_REGION, RESTORE_TERMINAL};
+use stray_cat::frames::Palette;
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -32,6 +33,14 @@ fn contains(bytes: &[u8], part: &[u8]) -> bool {
     bytes.windows(part.len()).any(|window| window == part)
 }
 
+/// A terminal that shows images, outside tmux, with the cursor at the top left.
+const BAR: Setup = Setup {
+    images_supported: true,
+    inside_tmux: false,
+    cursor: Some((0, 0)),
+    palette: None,
+};
+
 fn size(rows: u16) -> PtySize {
     PtySize {
         rows,
@@ -47,7 +56,14 @@ fn scrolling_leaves_the_bar_empty_and_preserves_the_programs_saved_cursor() -> R
     // The default size is 24 rows and 80 columns, the same as `size(24)`.
     let mut terminal = vt100::Parser::default();
     terminal.process(b"\x1b[6;7H\x1b7\x1b[8;9H");
-    let mut output = Output::new(writer.clone(), size(24), true, false, Some((7, 8)))?;
+    let mut output = Output::new(
+        writer.clone(),
+        size(24),
+        Setup {
+            cursor: Some((7, 8)),
+            ..BAR
+        },
+    )?;
     terminal.process(&writer.take());
     assert_eq!(terminal.screen().cursor_position(), (7, 8));
 
@@ -66,7 +82,7 @@ fn scrolling_leaves_the_bar_empty_and_preserves_the_programs_saved_cursor() -> R
 #[test]
 fn resizing_across_the_height_boundary_updates_the_region() -> Result {
     let writer = Writer::default();
-    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    let mut output = Output::new(writer.clone(), size(24), BAR)?;
     writer.take();
     for (rows, expected, region) in [
         (9, 9, "\x1b[r"),
@@ -91,7 +107,7 @@ fn resizes_wait_for_split_sequences_and_synchronized_updates() -> Result {
         (b"\x1b[?2026hhello", b"\x1b[?2026l"),
     ] {
         let writer = Writer::default();
-        let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+        let mut output = Output::new(writer.clone(), size(24), BAR)?;
         writer.take();
         output.write_all(prefix)?;
         assert_eq!(writer.take(), prefix);
@@ -108,7 +124,7 @@ fn resizes_wait_for_split_sequences_and_synchronized_updates() -> Result {
 #[test]
 fn disabled_images_forward_bytes_without_terminal_changes() -> Result {
     let writer = Writer::default();
-    let mut output = Output::new(writer.clone(), size(24), false, false, None)?;
+    let mut output = Output::new(writer.clone(), size(24), Setup::default())?;
     assert_eq!(output.resize(size(40))?, size(40));
     output.write_all(b"\x1b[31mshell> ")?;
     drop(output);
@@ -120,7 +136,7 @@ fn disabled_images_forward_bytes_without_terminal_changes() -> Result {
 fn unwinding_restores_the_full_region_even_after_incomplete_output() -> Result {
     let writer = Writer::default();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> io::Result<()> {
-        let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+        let mut output = Output::new(writer.clone(), size(24), BAR)?;
         writer.take();
         output.write_all(b"\x1b_Gunfinished")?;
         panic!("test failure");
@@ -148,7 +164,7 @@ fn count(bytes: &[u8], part: &[u8]) -> usize {
 #[test]
 fn the_cat_and_its_things_are_drawn_in_the_bar_and_removed_on_exit() -> Result {
     let writer = Writer::default();
-    let output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    let output = Output::new(writer.clone(), size(24), BAR)?;
     let bytes = writer.take();
     assert_eq!(count(&bytes, SHOW), PICTURES_IN_BAR);
     // The cat tree starts the first bar row, just below the 22 shell rows.
@@ -161,7 +177,7 @@ fn the_cat_and_its_things_are_drawn_in_the_bar_and_removed_on_exit() -> Result {
 #[test]
 fn a_short_window_takes_the_cat_away_until_it_grows() -> Result {
     let writer = Writer::default();
-    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    let mut output = Output::new(writer.clone(), size(24), BAR)?;
     writer.take();
     output.resize(size(9))?;
     assert_eq!(count(&writer.take(), REMOVE), PICTURES_IN_BAR);
@@ -175,7 +191,14 @@ fn a_short_window_takes_the_cat_away_until_it_grows() -> Result {
 #[test]
 fn inside_tmux_the_rows_are_kept_but_nothing_is_drawn_yet() -> Result {
     let writer = Writer::default();
-    let output = Output::new(writer.clone(), size(24), true, true, Some((0, 0)))?;
+    let output = Output::new(
+        writer.clone(),
+        size(24),
+        Setup {
+            inside_tmux: true,
+            ..BAR
+        },
+    )?;
     let bytes = writer.take();
     assert!(contains(&bytes, b"\x1b[1;22r"));
     assert_eq!(count(&bytes, SHOW), 0);
@@ -200,7 +223,7 @@ fn clears_resets_and_full_screen_switches_draw_the_bar_again() -> Result {
         b"\x1b[?1049l",
     ] {
         let writer = Writer::default();
-        let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+        let mut output = Output::new(writer.clone(), size(24), BAR)?;
         writer.take();
         output.write_all(bytes)?;
         let written = writer.take();
@@ -213,7 +236,7 @@ fn clears_resets_and_full_screen_switches_draw_the_bar_again() -> Result {
 #[test]
 fn everyday_output_leaves_the_bar_alone() -> Result {
     let writer = Writer::default();
-    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    let mut output = Output::new(writer.clone(), size(24), BAR)?;
     writer.take();
     // Text, clearing below the prompt, a region inside the shell rows, and a move to the
     // last shell row.
@@ -227,7 +250,7 @@ fn everyday_output_leaves_the_bar_alone() -> Result {
 #[test]
 fn a_redraw_waits_for_a_synchronized_update_to_end() -> Result {
     let writer = Writer::default();
-    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    let mut output = Output::new(writer.clone(), size(24), BAR)?;
     writer.take();
     output.write_all(b"\x1b[?2026h\x1b[2J")?;
     assert_eq!(count(&writer.take(), SHOW), 0);
@@ -240,7 +263,7 @@ fn a_redraw_waits_for_a_synchronized_update_to_end() -> Result {
 fn cursor_moves_into_the_bar_are_sent_back_to_the_last_shell_row() -> Result {
     let writer = Writer::default();
     let mut terminal = vt100::Parser::default();
-    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    let mut output = Output::new(writer.clone(), size(24), BAR)?;
     terminal.process(&writer.take());
     for (bytes, expected) in [
         (b"\x1b[24;5H".as_slice(), (21, 4)),
@@ -251,5 +274,25 @@ fn cursor_moves_into_the_bar_are_sent_back_to_the_last_shell_row() -> Result {
         terminal.process(&writer.take());
         assert_eq!(terminal.screen().cursor_position(), expected, "{bytes:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn the_terminal_colors_reach_the_pictures() -> Result {
+    let plain = Writer::default();
+    drop(Output::new(plain.clone(), size(24), BAR)?);
+    let colored = Writer::default();
+    let palette = Palette {
+        text: [200, 180, 160],
+        background: [10, 20, 30],
+    };
+    let setup = Setup {
+        palette: Some(palette),
+        ..BAR
+    };
+    drop(Output::new(colored.clone(), size(24), setup)?);
+    let (plain, colored) = (plain.take(), colored.take());
+    assert_eq!(count(&colored, SHOW), PICTURES_IN_BAR);
+    assert_ne!(plain, colored);
     Ok(())
 }

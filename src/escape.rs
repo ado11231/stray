@@ -11,6 +11,18 @@ pub const CSI: &[u8] = b"\x1b[";
 /// Starts a private CSI sequence, such as a device attributes reply.
 pub const CSI_PRIVATE: &[u8] = b"\x1b[?";
 
+/// Starts an OSC sequence, such as a window title or a color reply.
+pub const OSC: &[u8] = b"\x1b]";
+
+/// Ends an OSC sequence. Terminals answer with this or with `STRING_END`.
+pub const BELL: u8 = 0x07;
+
+/// Asks the terminal for its text color. The reply looks like `ESC ] 10 ; rgb:ffff/ffff/ffff`.
+pub const TEXT_COLOR_QUERY: &[u8] = b"\x1b]10;?\x1b\\";
+
+/// Asks the terminal for its background color, with a reply like the text color's.
+pub const BACKGROUND_COLOR_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
+
 /// Starts a kitty graphics command or reply.
 pub const GRAPHICS_START: &[u8] = b"\x1b_G";
 

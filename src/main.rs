@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::ExitCode;
+use stray_cat::bar;
 
 #[derive(Parser)]
 #[command(name = "stray", version, about)]
@@ -98,8 +99,13 @@ fn start(shell: Option<OsString>, login: bool) -> Result<ExitCode> {
     }
 
     let command = wrapper::build_shell_command(&shell_path, login);
-    match wrapper::ShellSession::start_with_bar(command, check.supported, inside_tmux, check.cursor)
-    {
+    let setup = bar::Setup {
+        images_supported: check.supported,
+        inside_tmux,
+        cursor: check.cursor,
+        palette: check.palette(),
+    };
+    match wrapper::ShellSession::start_with_bar(command, setup) {
         Ok(session) => session.run_with_input(check.input),
         Err(error) => fall_back(&error, &shell_path, login),
     }
