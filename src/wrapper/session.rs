@@ -144,7 +144,7 @@ fn forward_session(
     resize: impl FnMut(&mut bar::Output<Stdout>) -> Result<()>,
 ) -> Result<()> {
     // The input thread may stay blocked on stdin, so it is not joined.
-    let _input_thread = start_input_thread(writer, early_input, sender.clone())?;
+    let _input_thread = start_input_thread(writer, early_input, output.typed(), sender.clone())?;
     let output_thread = start_output_thread(reader, sender)?;
     // Owning the receiver here closes the queue before resize cleanup on any error.
     forward_session_events(receiver, output, resize, |output, now| {

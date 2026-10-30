@@ -59,6 +59,7 @@ impl Plan {
             frames: Some(pose.frame_count()),
             x: self.x,
             move_per_frame: 0,
+            still: false,
         });
     }
 
@@ -71,6 +72,7 @@ impl Plan {
             frames: None,
             x: self.x,
             move_per_frame: 0,
+            still: false,
         });
     }
 
@@ -136,6 +138,7 @@ impl Plan {
             // The first frame is already a stride out, so the last one lands on the spot.
             x: self.x + move_per_frame,
             move_per_frame,
+            still: false,
         });
         self.x = x;
         self
@@ -172,6 +175,7 @@ impl Plan {
             frames: Some(lean_frames),
             x: seat + LEAN_STEP,
             move_per_frame: LEAN_STEP,
+            still: false,
         };
         self.steps.push(lean);
         let eat_frames = length.as_millis() / Pose::Eat.frame_time().as_millis().max(1);
@@ -182,6 +186,7 @@ impl Plan {
             frames: Some(usize::try_from(eat_frames).unwrap_or(usize::MAX).max(1)),
             x: seat + EAT_OFFSET,
             move_per_frame: 0,
+            still: false,
         });
         lean.backward = true;
         lean.x = seat + LEAN_STEP * lean_frames_signed;
@@ -209,6 +214,7 @@ impl Plan {
             frames: Some(frames),
             x: self.x + move_per_frame,
             move_per_frame,
+            still: false,
         });
         self.x += move_per_frame * i32::try_from(frames).unwrap_or(0);
         self.play(Pose::Bat, false);
@@ -219,6 +225,28 @@ impl Plan {
     /// How far a pounce moves the cat, so the caller can check there is room.
     pub fn pounce_length() -> i32 {
         POUNCE_STEP * i32::try_from(Pose::Pounce.frame_count()).unwrap_or(0)
+    }
+
+    /// From sitting, looks up and holds it until the cat does something else.
+    pub fn look_up(mut self) -> Self {
+        self.play(Pose::LookUp, false);
+        self.steps.push(Step {
+            pose: Pose::LookUp,
+            facing: self.facing,
+            // Played backward, the first frame shown is the last one: looking up.
+            backward: true,
+            frames: None,
+            x: self.x,
+            move_per_frame: 0,
+            still: true,
+        });
+        self
+    }
+
+    /// From looking up, looks back down and sits.
+    pub fn look_down(mut self) -> Self {
+        self.play(Pose::LookUp, true);
+        self.sit()
     }
 
     /// From sitting, lies down and falls asleep: getting up from a nap, played backward.
@@ -358,6 +386,15 @@ mod tests {
         assert_eq!(poses.first(), Some(&Pose::SitDown));
         assert!(poses.contains(&Pose::Pounce) && poses.contains(&Pose::Bat));
         assert_eq!(poses.last(), Some(&Pose::Sit));
+    }
+
+    #[test]
+    fn looking_up_holds_the_last_frame() -> anyhow::Result<()> {
+        let steps = Plan::from(222, Facing::Right).look_up().steps();
+        let held = steps.last().ok_or_else(|| anyhow::anyhow!("a held look"))?;
+        let top = Pose::LookUp.frame_count() - 1;
+        assert_eq!((held.frames, held.sprite(9).index), (None, top));
+        Ok(())
     }
 
     #[test]

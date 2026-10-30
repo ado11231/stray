@@ -24,6 +24,9 @@ const EAT_SPOT: i32 = 263;
 /// How long the cat eats at each meal.
 const MEAL_LENGTH: Duration = Duration::from_secs(3 * 60);
 
+/// How long the cat keeps looking up after the last key.
+const LOOK_HOLD: Duration = Duration::from_millis(900);
+
 /// How long the cat sits still in free time before it picks a resting action, in seconds.
 /// Short enough that it does each action within about ten minutes.
 const REST_SECONDS: RangeInclusive<u64> = 5..=20;
@@ -52,7 +55,7 @@ const ACTIONS: [(Action, u32); 4] = [
 /// What the cat is busy with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Sits about. Resting actions come later.
+    /// Rests, and now and then does a resting action.
     Free,
     Eating,
     Sleeping,
@@ -72,6 +75,10 @@ pub struct Cat {
     bar_width: u32,
     /// In free time, when the cat stops resting and picks an action.
     rest_until: Option<Instant>,
+    /// When a key was last pressed, so the cat looks up until typing stops.
+    last_key: Option<Instant>,
+    /// A full screen program such as `vim` is open, so the cat sits still.
+    full_screen: bool,
     rng: fastrand::Rng,
 }
 
@@ -92,6 +99,8 @@ impl Cat {
             fed: None,
             bar_width: 0,
             rest_until: None,
+            last_key: None,
+            full_screen: false,
             rng: fastrand::Rng::new(),
         };
         cat.follow(plan, now);
@@ -106,6 +115,24 @@ impl Cat {
     /// Sets how wide the bar is, in sprite pixels, when the window opens or changes size.
     pub fn set_bar_width(&mut self, width: u32) {
         self.bar_width = width;
+    }
+
+    /// Notes that a full screen program such as `vim` opened or closed.
+    pub fn set_full_screen(&mut self, full_screen: bool) {
+        self.full_screen = full_screen;
+    }
+
+    /// A key was pressed. A cat sitting in free time looks up. A sleeping or eating cat,
+    /// or one busy with an action, does not notice.
+    pub fn key_pressed(&mut self, now: Instant) {
+        self.last_key = Some(now);
+        if self.mode != Mode::Free || self.full_screen || !self.settled() {
+            return;
+        }
+        let step = *self.step();
+        if step.pose == Pose::Sit {
+            self.follow(Plan::from(step.x, step.facing).look_up(), now);
+        }
     }
 
     /// Moves the cat on to `now`: finishes steps that are done, and when it is settled,
@@ -126,13 +153,41 @@ impl Cat {
             // The next step starts when the last one ended, so slow ticks do not slow the cat.
             self.started = ends;
         }
-        if self.step().frames.is_none() {
+        if self.looking_up() {
+            self.look_back_down(now);
+        }
+        if self.settled() {
             self.check_the_clock(now);
         }
         // The clock may have given the cat something to do, so check it is still settled.
-        if self.mode == Mode::Free && self.step().frames.is_none() {
+        if self.mode == Mode::Free && self.settled() {
             self.rest(now);
         }
+    }
+
+    /// The cat is sitting or sleeping with nothing else planned, so it can start something.
+    fn settled(&self) -> bool {
+        let step = self.step();
+        step.frames.is_none() && matches!(step.pose, Pose::Sit | Pose::Sleep)
+    }
+
+    /// The cat is holding its look up at the keys.
+    fn looking_up(&self) -> bool {
+        let step = self.step();
+        step.frames.is_none() && step.pose == Pose::LookUp
+    }
+
+    /// Once typing has stopped for a moment, looks back down and rests again.
+    fn look_back_down(&mut self, now: Instant) {
+        let typing = self
+            .last_key
+            .is_some_and(|key| now.saturating_duration_since(key) < LOOK_HOLD);
+        if typing {
+            return;
+        }
+        let step = *self.step();
+        self.rest_until = None;
+        self.follow(Plan::from(step.x, step.facing).look_down(), now);
     }
 
     /// The frame to show at `now`.
@@ -185,6 +240,11 @@ impl Cat {
 
     /// In free time, rests a while, then picks a resting action.
     fn rest(&mut self, now: Instant) {
+        if self.full_screen {
+            // The cat sits still, and rests from scratch once the program closes.
+            self.rest_until = None;
+            return;
+        }
         let Some(until) = self.rest_until else {
             let seconds = self.rng.u64(REST_SECONDS);
             self.rest_until = Some(now + Duration::from_secs(seconds));
@@ -288,6 +348,7 @@ const IDLE: Step = Step {
     frames: None,
     x: 0,
     move_per_frame: 0,
+    still: false,
 };
 
 /// The home spot as a signed spot, for planning moves.
@@ -490,5 +551,53 @@ mod tests {
         assert!(count(Action::Sit) > count(Action::Walk));
         assert!(count(Action::Walk) > count(Action::Run));
         assert!(count(Action::Run) > 0);
+    }
+
+    #[test]
+    fn typing_makes_a_sitting_cat_look_up_until_it_stops() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.key_pressed(start);
+        let (poses, _) = watch(&mut cat, start, Duration::from_millis(500));
+        assert_eq!(poses.last(), Some(&Pose::LookUp));
+
+        // Keys keep coming, so the cat keeps looking.
+        let mut now = start;
+        for _ in 0..5 {
+            now += Duration::from_millis(500);
+            cat.key_pressed(now);
+            cat.tick(now);
+            assert_eq!(cat.sprite(now).pose, Pose::LookUp);
+        }
+
+        // Typing stops, so it looks back down and sits.
+        let (poses, _) = watch(&mut cat, now, LOOK_HOLD + Duration::from_secs(1));
+        assert_eq!(poses.last(), Some(&Pose::Sit));
+    }
+
+    #[test]
+    fn typing_does_not_wake_a_sleeping_cat() {
+        let start = Instant::now();
+        let mut cat = cat_at(2, 0, start);
+        cat.key_pressed(start);
+        let (poses, _) = watch(&mut cat, start, Duration::from_secs(3));
+        assert!(poses.iter().all(|pose| *pose == Pose::Sleep));
+    }
+
+    #[test]
+    fn in_a_full_screen_program_the_cat_sits_still() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.set_full_screen(true);
+        cat.key_pressed(start);
+        let (poses, spots) = watch(&mut cat, start, Duration::from_secs(10 * 60));
+        assert!(poses.iter().all(|pose| *pose == Pose::Sit));
+        assert!(spots.iter().all(|x| *x == HOME_X));
+
+        // Once the program closes, the cat goes back to its resting actions.
+        cat.set_full_screen(false);
+        let later = start + Duration::from_secs(10 * 60);
+        let (poses, _) = watch(&mut cat, later, Duration::from_secs(10 * 60));
+        assert!(poses.iter().any(|pose| *pose != Pose::Sit));
     }
 }

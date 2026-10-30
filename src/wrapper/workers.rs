@@ -9,6 +9,8 @@ use anyhow::{Context, Result};
 use signal_hook::consts::SIGWINCH;
 use signal_hook::iterator::{Handle, Signals};
 use std::io::{ErrorKind, Read, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::thread::{self, JoinHandle};
 
@@ -32,6 +34,26 @@ impl Write for OutputSender {
     fn flush(&mut self) -> std::io::Result<()> {
         // The session loop flushes the terminal after each output event.
         Ok(())
+    }
+}
+
+/// Passes keys on to the shell, and raises `typed` so the cat can notice them.
+struct KeyWriter<W> {
+    writer: W,
+    typed: Arc<AtomicBool>,
+}
+
+impl<W: Write> Write for KeyWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let count = self.writer.write(bytes)?;
+        if count > 0 {
+            self.typed.store(true, Ordering::Relaxed);
+        }
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
     }
 }
 
@@ -98,10 +120,12 @@ pub fn start_resize_thread(
 
 /// Forwards keys straight to the shell and reports when input forwarding ends.
 ///
-/// `early_input` holds keys typed during the image check, which are sent first.
+/// `early_input` holds keys typed during the image check, which are sent first. Every key
+/// after that raises `typed`.
 pub fn start_input_thread(
     mut writer: impl Write + Send + 'static,
     early_input: Vec<u8>,
+    typed: Arc<AtomicBool>,
     events: SyncSender<SessionEvent>,
 ) -> Result<JoinHandle<()>> {
     thread::Builder::new()
@@ -111,7 +135,7 @@ pub fn start_input_thread(
                 writer
                     .write_all(&early_input)
                     .context("could not forward input from image check")?;
-                forward_input(std::io::stdin().lock(), writer)
+                forward_input(std::io::stdin().lock(), KeyWriter { writer, typed })
             });
             // A closed queue means the session has already ended.
             let _ = events.send(SessionEvent::InputFinished(result));
@@ -508,6 +532,21 @@ mod tests {
             error.downcast_ref::<io::Error>().map(io::Error::kind),
             Some(ErrorKind::WriteZero)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn keys_reach_the_shell_and_raise_the_flag() -> Result<()> {
+        let typed = Arc::new(AtomicBool::new(false));
+        let mut shell = Vec::new();
+        let writer = KeyWriter {
+            writer: &mut shell,
+            // The test reads the flag after the writer is done with it.
+            typed: Arc::clone(&typed),
+        };
+        forward_input(&b"ls"[..], writer)?;
+        assert_eq!(shell, b"ls");
+        assert!(typed.load(Ordering::Relaxed));
         Ok(())
     }
 }

@@ -10,6 +10,8 @@ use crate::schedule::Clock;
 use portable_pty::PtySize;
 use std::io::{self, Write};
 use std::num::NonZeroU16;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// When the shell is in the middle of a sequence, try drawing the cat again this soon.
@@ -37,6 +39,8 @@ pub struct Output<W: Write> {
     cell: Option<CellSize>,
     /// What the cat is doing, which picks the frame the scene shows.
     cat: Cat,
+    /// Raised by the keyboard thread when a key is pressed, and lowered here.
+    typed: Arc<AtomicBool>,
 }
 
 impl<W: Write> Output<W> {
@@ -59,6 +63,7 @@ impl<W: Write> Output<W> {
             changed_region: false,
             scene: (images_supported && !inside_tmux).then(|| Scene::new(Frames::new(palette))),
             cell: cell_size(size),
+            typed: Arc::new(AtomicBool::new(false)),
             cat: Cat::new(
                 Instant::now(),
                 Clock::from_env(Instant::now()).map_err(io::Error::other)?,
@@ -132,9 +137,21 @@ impl<W: Write> Output<W> {
         self.apply_region()
     }
 
+    /// The flag the keyboard thread raises on every key, so the cat can look up.
+    pub fn typed(&self) -> Arc<AtomicBool> {
+        // The keyboard thread holds its own handle to the same flag.
+        Arc::clone(&self.typed)
+    }
+
     /// Moves the cat on to its frame for `now`, and says when it should be called again.
     /// Returns `None` when there is no cat to move.
     pub fn animate(&mut self, now: Instant) -> io::Result<Option<Instant>> {
+        if self.typed.swap(false, Ordering::Relaxed) {
+            self.cat.key_pressed(now);
+        }
+        if let Some(parser) = &self.screen {
+            self.cat.set_full_screen(parser.screen().alternate_screen());
+        }
         let (Some(parser), Some(scene)) = (&self.screen, &mut self.scene) else {
             return Ok(None);
         };

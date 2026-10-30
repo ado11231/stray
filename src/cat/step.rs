@@ -16,6 +16,8 @@ pub struct Step {
     pub x: i32,
     /// How far each frame is drawn from the one before. Negative moves left.
     pub move_per_frame: i32,
+    /// Keeps showing the first frame instead of playing on, such as a held look up.
+    pub still: bool,
 }
 
 impl Step {
@@ -29,6 +31,7 @@ impl Step {
     pub fn sprite(&self, shown: usize) -> Sprite {
         // A step that has run out holds its last frame.
         let shown = match self.frames {
+            _ if self.still => 0,
             Some(frames) => shown.min(frames.saturating_sub(1)),
             None => shown,
         };
@@ -61,6 +64,7 @@ mod tests {
         frames: Some(4),
         x: 100,
         move_per_frame: 0,
+        still: false,
     };
 
     #[test]
@@ -93,6 +97,17 @@ mod tests {
     fn a_spot_left_of_the_bar_is_drawn_at_its_edge() {
         let step = Step { x: -20, ..GET_UP };
         assert_eq!(step.sprite(0).x, 0);
+    }
+
+    #[test]
+    fn a_still_step_keeps_its_first_frame() {
+        let held = Step {
+            still: true,
+            frames: None,
+            ..GET_UP
+        };
+        assert_eq!(held.sprite(0), held.sprite(50));
+        assert_eq!(held.sprite(0).index, Pose::SitDown.frame_count() - 1);
     }
 
     #[test]
