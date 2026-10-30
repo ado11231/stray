@@ -123,7 +123,7 @@ flowchart LR
 5. Add the prompt mark to the bash and zsh setup, to know when a command failed.
 6. Read the foreground program.
 7. Add the reactions: looking up at a key, coding agents, long runs, and failed commands.
-8. Draw the rest of the frames in the style of the sleeping cat, and the bowl.
+8. Draw the rest of the frames in the style of the sleeping cat, and the bowl. Done October 29, 2026: every pose has a first version.
 
 * **Done when:**
   * With the clock shifted, the cat eats, naps, and sleeps at the right times, in every open window.
@@ -164,14 +164,13 @@ flowchart LR
 * Details are in [Hard Parts](ARCHITECTURE.md#hard-parts).
 
 1. VS Code's image support is new. Placing frames by ID fails there, so Stray sends each frame again.
-2. Only the sleeping and waking frames are drawn so far.
-3. kitty and VS Code may handle the scroll region differently.
-4. Coding agents redraw the screen often.
-5. The wrapper may slow typing.
-6. Tools that run on Node may show the name `node`.
-7. Two rows may be too much in the short VS Code panel.
-8. Placeholders inside tmux may only work in kitty.
-9. Many tmux panes mean many bars, which may feel crowded.
+2. kitty and VS Code may handle the scroll region differently.
+3. Coding agents redraw the screen often.
+4. The wrapper may slow typing.
+5. Tools that run on Node may show the name `node`.
+6. Two rows may be too much in the short VS Code panel.
+7. Placeholders inside tmux may only work in kitty.
+8. Many tmux panes mean many bars, which may feel crowded.
 
 ## Open Questions
 
