@@ -13,7 +13,10 @@ from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
+from scipy.spatial import ConvexHull
 from PIL import Image, ImageDraw
+
+from face import add_details
 
 TOOLS = Path(__file__).resolve().parent
 SPRITES = TOOLS.parent / "sprites"
@@ -37,19 +40,20 @@ EYES = [(233, 115, 243, 132), (256, 116, 266, 133)]   # eye boxes in run_body.pn
 # chest: the front. leg_top: where the front legs start. tail_root, tail_len,
 # tail_start, tail_bend: the tail leaves here, this long, at this angle
 # (180 is straight back), turning this many degrees. head_turn: degrees the
-# head tips, below 0 nose down. A pose can also move the paws (see PAWS):
+# head tips, below 0 nose down. A pose can also change what DEFAULTS gives:
 # paw and far_paw are the front paws, as x from leg_top and y, and hind_paw
-# is the back paw. Left out, the paws stand on the floor.
+# is the back paw. Left out, the paws stand on the floor. tail_w is the
+# tail's width at the root and at the tip. soft_back keeps a dip in the back (see draw_back).
 SIT = dict(head=(178, 14), haunch=(157, 204, 55, 43, 90), chest=(160, 78, 236, 200),
            leg_top=(212, 140), tail_root=(124, 194), tail_len=95, tail_start=180, tail_bend=200, head_turn=0)
 # lying down with the head up, close to the last wake frame
-LOW = dict(head=(196, 100), haunch=(131, 204, 65, 40, 0), chest=(140, 136, 256, 204),
-           leg_top=(232, 186), tail_root=(74, 196), tail_len=30, tail_start=180, tail_bend=20, head_turn=0)
+LOW = dict(head=(196, 110), haunch=(131, 204, 66, 37, 0), chest=(140, 142, 256, 204),
+           leg_top=(232, 190), tail_root=(110, 198), tail_len=12, tail_start=180, tail_bend=20, head_turn=0)
 # standing on four legs, close to the walk
 STANDING = dict(head=(193, 42), haunch=(102, 170, 62, 38, 0), chest=(104, 86, 252, 158),
-                leg_top=(212, 148), tail_root=(58, 108), tail_len=60, tail_start=105, tail_bend=100, head_turn=0)
+                leg_top=(212, 148), tail_root=(58, 108), tail_len=80, tail_start=115, tail_bend=60, head_turn=0)
 # leaning over the bowl to eat, the head tipped down
-EAT = dict(head=(204, 100), haunch=(150, 204, 52, 42, 75), chest=(166, 118, 262, 204),
+EAT = dict(head=(204, 90), haunch=(150, 204, 52, 42, 75), chest=(166, 118, 262, 204),
            leg_top=(236, 164), tail_root=(118, 196), tail_len=95, tail_start=180, tail_bend=200, head_turn=-10)
 
 LEG_W = 20
@@ -57,33 +61,40 @@ PAW_R = 11
 FAR_LEG_DX = -14                 # the far leg stands a little behind the near one
 TAIL_W = (20, 16)
 TAIL_SWAY = 10                   # degrees the tip sways
+TAIL_BASE = 0.15                 # share of the tail, from the root, that joins into the body
+TAIL_FLARE = 0.3                 # how much wider the tail is where it meets the body
 
 FRAMES = 16
-LEAN = [0.35, 0.7]               # share of the way from SIT to EAT in each lean down frame
+LEAN = [0.25, 0.5, 0.75]             # share of the way from SIT to EAT in each lean down frame
 EAT_FRAMES = 8
 CHEW = 3                         # px the head bobs while it eats
 
 # the bowl, on its own small canvas so it can stay at home while the cat walks off
-BOWL_CANVAS = (100, 215)         # same height as the cat, so it scales the same
-BOWL_W, BOWL_H = 86, 26          # rim width, and height from the floor to the rim
+BOWL_CANVAS = (110, 215)         # same height as the cat, so it scales the same
+BOWL_W, BOWL_H = 96, 30          # rim width, and height from the floor to the rim
 BOWL_SLANT = 12                  # px the sides come in toward the floor
 BOWL_RIM = 7                     # half height of the rim oval
 BOWL = (150, 160, 185, 255)      # a soft grey blue, so it stands apart from the white cat
 FOOD = (96, 104, 128, 255)
 BLINK_AT = (10, 11)              # frames with the eyes shut
-STAND = [0.0, 0.3, 0.6, 0.85]    # share of the way from LOW to SIT in each stand frame
+STAND = [0.06, 0.2, 0.36, 0.54, 0.72, 0.88]   # share of the way from LOW to SIT in each stand frame
+# getting up, the head and front legs push up first, then the back end rolls up and the tail curls round
+STAND_PACE = dict(head=0.55, leg_top=0.55, chest=0.7, haunch=1.4,
+                  tail_root=1.5, tail_len=1.5, tail_start=1.5, tail_bend=1.5)
 SIT_DOWN = [0.0, 0.3, 0.6, 0.85] # share of the way from STANDING to SIT in each sit down frame
 # sitting down, the back end drops first and the front rises after
 SIT_DOWN_PACE = dict(haunch=0.6, tail_root=0.6, head=1.6, chest=1.6, leg_top=1.6)
 HIND_W = (32, 24, 19)            # back leg width at the hip, the hock, and the foot, like the walk
 UPPER, LOWER = 35, 33            # the two parts of the back leg
 HIND_PAW_X = 104                 # the back paw stays here while the cat sits down or gets up
+NECK_IN = 0.9                    # the neck meets the head a little inside its edge
 SMOOTH = 7                       # px; dips in the outline narrower than this get filled
 EARS = 40                        # px from the top of HEAD_BOX to the bottom of the ears
-BACK_IN = 0.12                   # how far in from each oval's top and bottom the back line runs
+BACK_IN = 0.12                   # with soft_back, how far in from each oval's top and bottom the back line runs
 FOOT = (12, 8)                   # half width and half height of the back foot
-# where the paws go when a pose does not say: all on the floor
-PAWS = dict(paw=(0, GROUND - PAW_R), far_paw=(0, GROUND - PAW_R), hind_paw=(HIND_PAW_X, GROUND - FOOT[1]))
+# what a pose gets when it does not say: all paws on the floor, and the usual tail width
+DEFAULTS = dict(paw=(0, GROUND - PAW_R), far_paw=(0, GROUND - PAW_R), hind_paw=(HIND_PAW_X, GROUND - FOOT[1]),
+                tail_w=TAIL_W, soft_back=False)
 
 
 def big(xy):
@@ -98,7 +109,7 @@ def dot(draw, xy, r, color):
 
 def cut_head():
     """The run cat's head, with the bit of back behind it trimmed off."""
-    body = Image.open(TOOLS / "run_body.png").convert("RGBA")
+    body = add_details(Image.open(TOOLS / "run_body.png"))
     head = np.array(body.crop([v * SCALE for v in HEAD_BOX]))
     h, w = head.shape[:2]
     ys, xs = np.mgrid[0:h, 0:w]
@@ -124,8 +135,8 @@ def shut_eyes(head):
 
 
 def full(pose):
-    """The pose with the paws it left out standing on the floor."""
-    return {**PAWS, **pose}
+    """The pose with anything it left out taken from DEFAULTS."""
+    return {**DEFAULTS, **pose}
 
 
 def blend(a, b, share, pace=None):
@@ -143,17 +154,24 @@ def blend(a, b, share, pace=None):
     return out
 
 
-def draw_tail(draw, pose, sway):
+def draw_tail(draw, body_draw, pose, sway):
+    """The tail under the body. Its base also goes on the body layer, joined into
+    the haunch and a little wider, so the outline smoothing blends it into the body."""
     x, y = pose["tail_root"]
+    root_w, tip_w = pose["tail_w"]
+    taper(body_draw, haunch_middle(pose["haunch"]), (x, y), root_w * (1 + TAIL_FLARE), root_w * (1 + TAIL_FLARE))
     steps = round(pose["tail_len"] * 2)
     for k in range(steps + 1):
         t = k / steps
         # most of the bend happens near the tip, so it lies flat first then curls up
         deg = pose["tail_start"] - (pose["tail_bend"] + sway) * t ** 2.5
-        dot(draw, (x, y), (TAIL_W[0] + (TAIL_W[1] - TAIL_W[0]) * t) / 2, WHITE)
+        r = (root_w + (tip_w - root_w) * t) / 2
+        dot(draw, (x, min(y, GROUND - r)), r, WHITE)   # never below the floor
+        if t < TAIL_BASE:
+            dot(body_draw, (x, y), r * (1 + TAIL_FLARE * (1 - t / TAIL_BASE)), WHITE)
         x += math.cos(math.radians(deg)) / 2
         y -= math.sin(math.radians(deg)) / 2
-        y = min(y, GROUND - TAIL_W[1] / 2)
+        y = min(y, GROUND - tip_w / 2)
 
 
 def draw_leg(draw, top, paw, color, edge=None):
@@ -226,15 +244,48 @@ def draw_hind_leg(draw, haunch, paw):
 
 
 def draw_back(draw, pose):
-    """Fill between the haunch and the chest, so the back is one line and not two balls."""
-    hx, hy1 = pose["haunch"][:2]
-    hy0 = hy1 - 2 * haunch_reach(pose["haunch"])[1]
-    cx0, cy0, cx1, cy1 = pose["chest"]
-    cx = (cx0 + cx1) / 2
-    # a little in from the top and bottom of each oval, so the edges stay round
-    h_in, c_in = (hy1 - hy0) * BACK_IN, (cy1 - cy0) * BACK_IN
-    corners = [(hx, hy0 + h_in), (cx, cy0 + c_in), (cx, cy1 - c_in), (hx, hy1 - h_in)]
-    draw.polygon([big(c) for c in corners], fill=WHITE)
+    """Fill around the haunch and the chest, so the back is one straight line and not two balls.
+    A pose with soft_back keeps a little dip between them instead, like a cat stretched out in a leap."""
+    x0, y0, x1, y1 = pose["chest"]
+    if pose["soft_back"]:
+        hx, hy1 = pose["haunch"][:2]
+        hy0 = hy1 - 2 * haunch_reach(pose["haunch"])[1]
+        cx = (x0 + x1) / 2
+        # a little in from the top and bottom of each oval, so the edges stay round
+        h_in, c_in = (hy1 - hy0) * BACK_IN, (y1 - y0) * BACK_IN
+        corners = [(hx, hy0 + h_in), (cx, y0 + c_in), (cx, y1 - c_in), (hx, hy1 - h_in)]
+        draw.polygon([big(c) for c in corners], fill=WHITE)
+        return
+    chest = oval_points(((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2)
+    length, width, tilt = pose["haunch"][2:]
+    haunch = oval_points(haunch_middle(pose["haunch"]), length, width, tilt)
+    points = haunch + chest
+    draw.polygon([big(points[i]) for i in ConvexHull(points).vertices], fill=WHITE)
+
+
+def oval_points(middle, rx, ry, turn=0):
+    """Points around an oval with these half widths, tipped by turn degrees like the head."""
+    a = math.radians(turn)
+    points = []
+    for k in range(48):
+        t = 2 * math.pi * k / 48
+        u, v = rx * math.cos(t), ry * math.sin(t)
+        points.append((middle[0] + u * math.cos(a) + v * math.sin(a), middle[1] - u * math.sin(a) + v * math.cos(a)))
+    return points
+
+
+def draw_neck(draw, pose):
+    """Fill the outline around the head and the chest, so the neck runs into the
+    body in one line instead of the head sitting on top like a ball."""
+    hx, hy = pose["head"]
+    middle = (hx + HEAD_KEEP[0] - HEAD_BOX[0], hy + HEAD_KEEP[1] - HEAD_BOX[1])
+    head = oval_points(middle, HEAD_KEEP[2] * NECK_IN, HEAD_KEEP[3] * NECK_IN, pose["head_turn"])
+    # only the back of the head, below the ears, so the ears stay apart and the chin stays in front
+    head = [(x, y) for x, y in head if x <= middle[0] and y >= hy + EARS]
+    x0, y0, x1, y1 = pose["chest"]
+    chest = oval_points(((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2)
+    points = head + chest
+    draw.polygon([big(points[i]) for i in ConvexHull(points).vertices], fill=WHITE)
 
 
 def solid(layer):
@@ -292,19 +343,22 @@ def draw_frame(head, pose, sway=0):
     im = Image.new("RGBA", big(CANVAS), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
     leg_x, leg_y = pose["leg_top"]
-    draw_tail(draw, pose, sway)
+    # the body and head go on their own layer, so their outline can be smoothed
+    body = Image.new("RGBA", big(CANVAS), (0, 0, 0, 0))
+    body_draw = ImageDraw.Draw(body)
+    draw_tail(draw, body_draw, pose, sway)
     if pose["haunch"][1] < GROUND:
         draw_hind_leg(draw, pose["haunch"], pose["hind_paw"])
     far = pose["far_paw"]
     draw_leg(draw, (leg_x + FAR_LEG_DX, leg_y), (leg_x + FAR_LEG_DX + far[0], far[1]), FAR)
-    # the body and head go on their own layer, so their outline can be smoothed
-    body = Image.new("RGBA", big(CANVAS), (0, 0, 0, 0))
-    body_draw = ImageDraw.Draw(body)
     draw_haunch(body_draw, pose["haunch"])
     body_draw.ellipse([v * SCALE for v in pose["chest"]], fill=WHITE)
     draw_back(body_draw, pose)
+    draw_neck(body_draw, pose)
     head, head_at = turn_head(head, pose)
     body.alpha_composite(head, head_at)
+    # nothing on the body layer goes below the floor, like the tail base near the ground
+    ImageDraw.Draw(body).rectangle([0, GROUND * SCALE, body.width, body.height], fill=(0, 0, 0, 0))
     im.alpha_composite(smooth(body, pose["head"][1] + EARS))
     near = pose["paw"]
     draw_leg(ImageDraw.Draw(im), (leg_x, leg_y), (leg_x + near[0], near[1]), WHITE, EDGE)
@@ -330,7 +384,7 @@ if __name__ == "__main__":
         sway = TAIL_SWAY * math.sin(2 * math.pi * k / FRAMES)
         frames.append(draw_frame(blink if k in BLINK_AT else head, SIT, sway))
     save("sit", frames)
-    save("stand", [draw_frame(head, blend(LOW, SIT, share)) for share in STAND])
+    save("stand", [draw_frame(head, blend(LOW, SIT, share, STAND_PACE)) for share in STAND])
     save("sit_down", [draw_frame(head, blend(STANDING, SIT, share, SIT_DOWN_PACE)) for share in SIT_DOWN])
     save("lean", [draw_frame(head, blend(SIT, EAT, share)) for share in LEAN])
     eat = []

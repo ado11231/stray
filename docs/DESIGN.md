@@ -144,20 +144,23 @@ flowchart TD
 | --- | --- | --- |
 | Sleeping | Drawn, 27 frames | Naps and night. |
 | Waking | Drawn, 5 frames | Waking from a nap or at morning. |
-| Standing up | Drawn, 4 frames | Getting up into a sit after waking. |
+| Standing up | Drawn, 6 frames | Getting up into a sit after waking. |
 | Sitting | Drawn, 16 frames | Resting and watching. |
 | Sitting down | Drawn, 4 frames | Sitting down after a walk. Played backwards to get up. |
 | Walking | Drawn, 8 frames | The walk action, and going to the home spot. |
 | Running | Drawn, 8 frames | The run action, and chasing the ball. |
-| Leaning in | Drawn, 2 frames | Leaning from the sit down to the bowl. Played backwards to sit up. |
+| Turning | Drawn, 2 frames | Turning around while standing: a three quarter view, then facing you. Played, then flipped and played backwards. |
+| Leaning in | Drawn, 3 frames | Leaning from the sit down to the bowl. Played backwards to sit up. |
 | Eating | Drawn, 8 frames | Meals and treats, with its face in the bowl. |
-| Playing | Drawn, 15 frames | The play action: crouch, wiggle, pounce, and bat the ball. |
-| Reactions | Drawn, 15 frames | Looking up, flinching, perking up, and being petted. Each plays forward, then backward to settle. |
+| Playing | Drawn, 17 frames | The play action: crouch, wiggle, pounce, and bat the ball. |
+| Reactions | Drawn, 17 frames | Looking up, flinching, perking up, and being petted, with purr marks. Each plays forward, then backward to settle. |
 
 * Every pose uses the same cat as the sleeping frames.
+* The face has two eyes and no nose, and a soft grey line inside each ear.
 * The sprites live in `assets/sprites`, one folder per pose.
-* The bowl is its own image. It stays at the home spot, just past the sleeping cat's nose, and is drawn in front of the cat.
-* The cat scoots up to the bowl as it leans in to eat, and back as it sits up.
+* A cat tree stands in the bottom left corner: a rope post, a shelf with a toy ball hanging from it, and a bed with one arm on top. It is only there to look at; the cat does not climb it.
+* The bowl is its own image. It sits between the cat tree and the home spot, and is drawn in front of the cat.
+* To eat, the cat comes home facing the bowl, sits, and scoots up to it as it leans in, and back as it sits up.
 * The ball is its own image too. It stays where it last rolled. The cat moves forward as it pounces.
 
 ## Commands

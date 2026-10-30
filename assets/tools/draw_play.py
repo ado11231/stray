@@ -15,24 +15,27 @@ from PIL import Image, ImageDraw
 import draw_sit as cat
 from draw_sit import GROUND, PAW_R, FOOT, SCALE, big, blend, draw_frame, save
 
-# low in front, the back end up, looking ahead at the ball
-CROUCH = dict(head=(204, 86), haunch=(110, 176, 56, 38, -12), chest=(150, 128, 250, 204),
-              leg_top=(226, 178), tail_root=(64, 142), tail_len=50, tail_start=155, tail_bend=-30,
+# low in front, the back end a little up, looking ahead at the ball. The back legs
+# are folded under the body, ready to push: the paw forward, the heel back.
+CROUCH = dict(head=(204, 86), haunch=(112, 180, 54, 34, -6), chest=(150, 128, 250, 204),
+              leg_top=(226, 178), tail_root=(64, 150), tail_len=50, tail_start=160, tail_bend=-25,
               head_turn=0, paw=(10, GROUND - PAW_R), far_paw=(6, GROUND - PAW_R),
-              hind_paw=(112, GROUND - FOOT[1]))
-# pushing off: the back legs straighten, the front comes up and reaches
+              hind_paw=(140, GROUND - FOOT[1]))
+# pushing off: the back legs straighten, the front comes up and reaches, nose up
 LAUNCH = dict(head=(212, 58), haunch=(100, 160, 62, 36, 10), chest=(150, 98, 262, 170),
-              leg_top=(240, 148), tail_root=(58, 122), tail_len=50, tail_start=165, tail_bend=-10,
-              head_turn=0, paw=(26, 168), far_paw=(18, 174), hind_paw=(66, GROUND - FOOT[1]))
-# in the air, stretched out long
-AIR = dict(head=(214, 34), haunch=(96, 134, 64, 34, 0), chest=(140, 70, 262, 138),
-           leg_top=(244, 118), tail_root=(52, 100), tail_len=50, tail_start=172, tail_bend=-10,
-           head_turn=0, paw=(30, 150), far_paw=(22, 156), hind_paw=(40, 150))
-# front paws down on the ball spot, the back end still coming down
+              leg_top=(240, 148), tail_root=(58, 122), tail_len=50, tail_start=145, tail_bend=10,
+              head_turn=8, paw=(26, 168), far_paw=(18, 174), hind_paw=(66, GROUND - FOOT[1]), soft_back=True)
+# high in the air, stretched out long: front paws reach ahead, back legs trail behind
+AIR = dict(head=(214, 22), haunch=(96, 122, 64, 34, 0), chest=(140, 58, 262, 126),
+           leg_top=(244, 106), tail_root=(52, 88), tail_len=50, tail_start=138, tail_bend=10,
+           head_turn=0, paw=(40, 126), far_paw=(32, 132), hind_paw=(26, 130), soft_back=True)
+# front paws down on the ball spot, nose down, the back end still coming down
 LAND = dict(head=(208, 88), haunch=(108, 172, 58, 38, -14), chest=(152, 124, 256, 204),
             leg_top=(232, 172), tail_root=(62, 134), tail_len=50, tail_start=140, tail_bend=-30,
-            head_turn=0, paw=(16, GROUND - PAW_R), far_paw=(10, GROUND - PAW_R),
-            hind_paw=(86, GROUND - FOOT[1]))
+            head_turn=-6, paw=(16, GROUND - PAW_R), far_paw=(10, GROUND - PAW_R),
+            hind_paw=(86, GROUND - FOOT[1]), soft_back=True)
+# the leap, with a frame between each pose so the arc is smooth
+POUNCE = [(LAUNCH, AIR, 0), (LAUNCH, AIR, 0.5), (LAUNCH, AIR, 1), (AIR, LAND, 0.5), (AIR, LAND, 1)]
 
 CROUCH_IN = [0.35, 0.7]          # share of the way from STANDING to CROUCH in each crouch frame
 WIGGLE_FRAMES = 6
@@ -45,7 +48,7 @@ BAT_PAWS = [(22, 176), (46, 164), (62, 186), (40, GROUND - PAW_R)]
 
 # the ball, on its own small canvas so it can roll along the bar
 BALL_CANVAS = (40, 215)          # same height as the cat, so it scales the same
-BALL_R = 12
+BALL_R = 15
 BALL = (236, 122, 110, 255)      # a soft red, a toy that stands apart from the white cat
 STRIPE = (255, 236, 230, 255)
 STRIPE_W = 3
@@ -75,6 +78,6 @@ for k in range(WIGGLE_FRAMES):
     shake = (x + WIGGLE[0] * math.sin(turn), bottom - WIGGLE[1] * abs(math.sin(turn)), *rest)
     wiggle.append(draw_frame(head, dict(CROUCH, haunch=shake), WIGGLE_SWAY * math.sin(turn)))
 save("wiggle", wiggle)
-save("pounce", [draw_frame(head, pose) for pose in (LAUNCH, AIR, LAND)])
+save("pounce", [draw_frame(head, blend(a, b, share)) for a, b, share in POUNCE])
 save("bat", [draw_frame(head, dict(CROUCH, head=BAT_HEAD, paw=paw)) for paw in BAT_PAWS])
 save("ball", [draw_ball(k / BALL_FRAMES) for k in range(BALL_FRAMES)])

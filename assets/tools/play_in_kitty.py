@@ -5,8 +5,8 @@ The cat lives in the bottom rows, like the bar. It sleeps until you press
 any key, wakes, stands up and sits. Then it gets up and goes after its
 ball: it crouches, wiggles, pounces and bats it along the bar, and runs
 after it when it rolls, a few times.
-Then it walks back home to the corner and eats from its bowl, and does it
-all again. When the ball gets to the far end, it is put back for the next go.
+Then it walks back to its bowl, between its spot and the cat tree in the corner, sits and
+eats, and does it all again. When the ball gets to the far end, it is put back for the next go.
 Press q at any time to quit.
 
 With react, the cat just sits at home and you press keys to see how it
@@ -29,26 +29,28 @@ from PIL import Image
 SPRITES = Path(__file__).resolve().parent.parent / "sprites"
 ROWS = next((int(a) for a in sys.argv[1:] if a.isdigit()), 3)
 REACT_MODE = "react" in sys.argv[1:]
-IMAGE_ID, BOWL_ID, BALL_ID = 1, 2, 3
+IMAGE_ID, BOWL_ID, BALL_ID, TOWER_ID = 1, 2, 3, 4
 SLEEP_MS, WAKE_MS, STAND_MS, SIT_MS, WALK_MS, SIT_DOWN_MS = 133, 70, 90, 120, 110, 90
 LEAN_MS, EAT_MS = 110, 120
+TURN_MS = 80
 CROUCH_MS, WIGGLE_MS, POUNCE_MS, BAT_MS, ROLL_MS = 90, 80, 90, 90, 50
 REACT_MS, PURR_MS = 70, 90
 LOOK_HOLD_MS, FLINCH_HOLD_MS, PERK_HOLD_MS = 900, 300, 1500
 PURR_LOOPS = 4
-HOME_X = 0               # its spot in the bar: the bottom left corner
+HOME_X = 222             # its spot in the bar, in sprite pixels: just past the bowl
+BOWL_X = 166             # the bowl, a little way past the cat tree in the bottom left corner
 SIT_LOOPS = 2            # times the sit plays before it moves on
 WALK_STRIDE = 0.330      # one walk loop covers this many image widths, from draw_walk.py
 RUN_STRIDE = 1.011       # and one run loop
 RUN_MS = 60
-BOWL_X = 301             # where the bowl sits from the cat's left edge, in sprite pixels, past the sleeping cat
-LEAN_STEP = (22, 44)     # sprite pixels the cat scoots toward the bowl in each lean frame
+EAT_SPOT = 263           # where it sits facing the bowl to eat, in sprite pixels, so its nose reaches the bowl
+LEAN_STEP = (16, 32, 48)   # sprite pixels the cat scoots toward the bowl in each lean frame
 EAT_STEP = 64            # and while it eats
 EAT_LOOPS = 3
 BALL_START = 0.12        # where the ball starts, as a share of the width
-BALL_MID, BALL_R = 20, 12    # the ball's middle on its canvas and its size, in sprite pixels, from draw_play.py
+BALL_MID, BALL_R = 20, 15    # the ball's middle on its canvas and its size, in sprite pixels, from draw_play.py
 BAT_REACH = 288          # how far from the cat's left edge its bat lands, in sprite pixels
-POUNCE_STEP = (10, 45, 70)   # sprite pixels the cat has moved in each pounce frame
+POUNCE_STEP = (8, 24, 42, 58, 70)   # sprite pixels the cat has moved in each pounce frame
 WIGGLE_LOOPS = 2
 PLAY_ROUNDS = 3
 ROLL = 1.2               # how far one bat rolls the ball, in image widths
@@ -95,7 +97,7 @@ def show(png, x, row, cell_w, image_id=IMAGE_ID):
 
 
 def show_nothing():
-    for image_id in (IMAGE_ID, BOWL_ID, BALL_ID):
+    for image_id in (IMAGE_ID, BOWL_ID, BALL_ID, TOWER_ID):
         sys.stdout.write(f"\033_Ga=d,d=I,i={image_id},q=2\033\\")
     sys.stdout.flush()
 
@@ -112,10 +114,12 @@ class Quit(Exception):
 def main():
     sleep, wake, stand, sit = frames("sleep"), frames("wake"), frames("stand"), frames("sit")
     walk, sit_down = frames("walk"), frames("sit_down")
-    lean, eat, bowl = frames("lean"), frames("eat"), frames("bowl")[0]
+    lean, eat, bowl = flipped(frames("lean")), flipped(frames("eat")), frames("bowl")[0]
+    tower = frames("tower")[0]
     crouch, wiggle, pounce, bat, ball = (frames(n) for n in ("crouch", "wiggle", "pounce", "bat", "ball"))
-    run = frames("run")
+    run, turn = frames("run"), frames("turn")
     runs = {True: run, False: flipped(run)}
+    turns = {True: turn, False: flipped(turn)}
     # walk, sit down and sit, facing right (True) or left (False)
     facing = {True: (walk, sit_down, sit),
               False: (flipped(walk), flipped(sit_down), flipped(sit))}
@@ -125,6 +129,11 @@ def main():
     img_w = ROWS * cell_h * canvas_w / canvas_h
     step = WALK_STRIDE * img_w / len(walk)
     px = img_w / canvas_w    # screen pixels per sprite pixel
+    home, eat_spot = HOME_X * px, EAT_SPOT * px
+    # a flipped frame puts the cat at a new spot unless it is moved by this much
+    left, _, right_edge, _ = Image.open(io.BytesIO(walk[0])).getchannel("A").getbbox()
+    flip_shift = (left + right_edge - canvas_w) * px
+    right = True             # which way the cat faces
     sys.stdout.write("\033[2J\033[?25l")
     sys.stdout.write(f"\033[1;1HStray test, {ROWS} rows. Any key wakes the cat, q quits.")
     sys.stdout.flush()
@@ -139,8 +148,20 @@ def main():
             show(pose[i % len(pose)], x, row, cell_w)
             wait(ms)
 
+    def turn_to(x, to_right):
+        """Turn around in place if it faces the other way. Returns where it is after."""
+        nonlocal right
+        if to_right == right:
+            return x
+        play(turns[right], TURN_MS, x)
+        x += flip_shift if right else -flip_shift
+        play(turns[to_right][::-1], TURN_MS, x)
+        right = to_right
+        return x
+
     def walk_to(x, to, running=False):
         """Walk, or run, from x to the spot to, facing the way it goes. Returns where it stops."""
+        x = turn_to(x, to > x)
         steps = runs[to > x] if running else facing[to > x][0]
         size = RUN_STRIDE * img_w / len(run) if running else step
         i = 0
@@ -152,14 +173,14 @@ def main():
         return to
 
     def eat_meal(x):
-        """Scoot up to the bowl, eat, and scoot back to sit."""
-        steps = [x + step_px * px for step_px in LEAN_STEP]
+        """Facing left, scoot up to the bowl, eat, and scoot back to sit."""
+        steps = [x - step_px * px for step_px in LEAN_STEP]
         for png, at in zip(lean, steps):
             play([png], LEAN_MS, at)
-        play(eat, EAT_MS, x + EAT_STEP * px, EAT_LOOPS)
+        play(eat, EAT_MS, x - EAT_STEP * px, EAT_LOOPS)
         for png, at in zip(lean[::-1], steps[::-1]):
             play([png], LEAN_MS, at)
-        play(sit, SIT_MS, x)
+        play(facing[False][2], SIT_MS, x)
 
     def show_ball(ball_x, turn):
         show(ball[round(turn * len(ball)) % len(ball)], ball_x, row, cell_w, BALL_ID)
@@ -190,26 +211,27 @@ def main():
     def react(name, hold_ms):
         """Go into a reaction, hold it, and settle back into the sit."""
         into = frames(name)
-        play(into, REACT_MS, HOME_X)
+        play(into, REACT_MS, home)
         wait(hold_ms)
-        play(into[::-1], REACT_MS, HOME_X)
+        play(into[::-1], REACT_MS, home)
 
     def pet():
         into, purr = frames("petted_in"), frames("purr")
-        play(into, REACT_MS, HOME_X)
-        play(purr, PURR_MS, HOME_X, PURR_LOOPS)
-        play(into[::-1], REACT_MS, HOME_X)
+        play(into, REACT_MS, home)
+        play(purr, PURR_MS, home, PURR_LOOPS)
+        play(into[::-1], REACT_MS, home)
 
     if REACT_MODE:
         sys.stdout.write("\033[2;1Hl looks up, f flinches, p perks up, h pets it.")
-        show(bowl, HOME_X + BOWL_X * px, row, cell_w, BOWL_ID)
+        show(tower, 0, row, cell_w, TOWER_ID)
+        show(bowl, BOWL_X * px, row, cell_w, BOWL_ID)
         reactions = {"l": lambda: react("look_up", LOOK_HOLD_MS),
                      "f": lambda: react("flinch", FLINCH_HOLD_MS),
                      "p": lambda: react("perk_up", PERK_HOLD_MS),
                      "h": pet}
         i = 0
         while True:
-            show(sit[i % len(sit)], HOME_X, row, cell_w)
+            show(sit[i % len(sit)], home, row, cell_w)
             key = key_pressed(SIT_MS / 1000)
             if key == "q":
                 raise Quit
@@ -217,10 +239,10 @@ def main():
                 reactions[key]()
             i += 1
 
-    home = HOME_X
     start, far = BALL_START * cols * cell_w, cols * cell_w - BALL_MID * 2 * px
     ball_x = start
-    show(bowl, home + BOWL_X * px, row, cell_w, BOWL_ID)
+    show(tower, 0, row, cell_w, TOWER_ID)
+    show(bowl, BOWL_X * px, row, cell_w, BOWL_ID)
     show_ball(ball_x, 0)
     # it sleeps until a key is pressed
     i = 0
@@ -235,23 +257,25 @@ def main():
     play(wake, WAKE_MS, home)
     play(stand, STAND_MS, home)
     play(sit, SIT_MS, home, SIT_LOOPS)
+    x = home
     while True:
         # out to play
         if ball_x >= far:
             ball_x = start
             show_ball(ball_x, 0)
-        play(sit_down[::-1], SIT_DOWN_MS, home)
-        x = home
+        play(facing[right][1][::-1], SIT_DOWN_MS, x)
         for round_ in range(PLAY_ROUNDS):
             if ball_x >= far:
                 break
             # it walks out to the ball, then runs after it once it rolls
             x = walk_to(x, spot_for(ball_x), running=round_ > 0)
+            x = turn_to(x, True)
             x, ball_x = play_ball(x, ball_x, far)
-        # home to eat, turning to face the bowl before it sits
-        x = walk_to(x, home)
-        play(sit_down, SIT_DOWN_MS, x)
-        play(sit, SIT_MS, x, SIT_LOOPS)
+        # home to eat, still facing left toward the bowl as it sits
+        x = walk_to(x, eat_spot)
+        left_sit_down, left_sit = facing[False][1:]
+        play(left_sit_down, SIT_DOWN_MS, x)
+        play(left_sit, SIT_MS, x, SIT_LOOPS)
         eat_meal(x)
 
 

@@ -14,6 +14,9 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
+from scipy import ndimage
+
+from face import add_details
 
 TOOLS = Path(__file__).resolve().parent
 SPRITES = TOOLS.parent / "sprites"
@@ -42,19 +45,24 @@ FAR_DX = -8              # far legs sit a little behind the near ones
 # spread: px the front paws step further forward and the back paws further back. bob: px the body dips as paws land. rock: degrees the body
 # tips nose down as the front lands and nose up as the back pushes off.
 # tail_root and tail_tip: degrees above straight back. tail_sway: degrees it sways.
+# tail_len: px long. The run tail is shorter so it stays inside the frame when it streams back.
 # Walk: diagonal pairs step together, so at a small size you always see one
 # clear pair of legs forward and one back.
 WALK = dict(frames=8, stride=56, on_floor=0.55, lift=8, phase=(0.0, 0.5, 0.5, 0.0),
-            raise_=14, spread=0, bob=1.5, rock=0, tail_root=58, tail_tip=140, tail_sway=4)
+            raise_=14, spread=0, bob=1.5, rock=0, tail_root=48, tail_tip=125, tail_sway=4, tail_len=84)
 # Run: the back legs push off together, then the front legs land together.
 RUN = dict(frames=8, stride=100, on_floor=0.32, lift=18, phase=(0.0, 0.08, 0.5, 0.58),
-           raise_=24, spread=14, bob=5, rock=5, tail_root=22, tail_tip=50, tail_sway=8)
+           raise_=24, spread=14, bob=5, rock=5, tail_root=22, tail_tip=50, tail_sway=8, tail_len=50)
 
 # body and tail, from run_body.png
 OLD_TAIL = (72, 97)      # the old curled tail is everything left of and above this
-TAIL_ROOT = (68, 102)     # in the body before it is raised
-TAIL_LEN = 60
-TAIL_W = (21, 17)
+TAIL_ROOT = (72, 110)     # in the body before it is raised, a little inside so the tail grows out of the back
+TAIL_W = (21, 14)
+TAIL_CURVE = 1.8         # above 1, most of the turn happens near the tip
+# the back of run_body.png sags between a high rump and the shoulders; everything
+# above this line is cut off so the back runs straight. Points are x, y in final pixels.
+BACK_LINE = [(56, 99), (120, 103), (190, 108)]
+RUMP_ROUND = 6           # px; the rump's top corner is rounded this much after the cut
 
 
 def distance(gait):
@@ -133,13 +141,29 @@ def cut_old_tail(body):
     return Image.fromarray(a)
 
 
+def straighten_back(body):
+    """Cut the rump down to BACK_LINE, then round off the corner the cut leaves."""
+    a = np.array(body)
+    xs, ys = zip(*BACK_LINE)
+    for col in range(round(xs[0] * SCALE), round(xs[-1] * SCALE)):
+        a[:round(np.interp(col / SCALE, xs, ys) * SCALE), col, 3] = 0
+    # an opening (shrink, then grow back) rounds corners; only the rump end is touched
+    solid = a[..., 3] > 127
+    rounded = ndimage.binary_opening(solid, iterations=RUMP_ROUND * SCALE)
+    rump = np.zeros_like(solid)
+    rump[:, :round(xs[1] * SCALE)] = True
+    a[solid & ~rounded & rump, 3] = 0
+    return Image.fromarray(a)
+
+
 def draw_tail(draw, sway, gait):
     """A thick curve that rises from the back and curls over at the tip."""
     x, y = TAIL_ROOT
-    steps = TAIL_LEN * 2
+    steps = gait["tail_len"] * 2
     for k in range(steps + 1):
         t = k / steps
-        deg = gait["tail_root"] + sway + (gait["tail_tip"] - gait["tail_root"]) * t
+        # it leans back from the root and turns up near the tip, a soft curve, not a pole
+        deg = gait["tail_root"] + sway + (gait["tail_tip"] - gait["tail_root"]) * t ** TAIL_CURVE
         dot(draw, (x, y), (TAIL_W[0] + (TAIL_W[1] - TAIL_W[0]) * t) / 2, WHITE)
         x -= math.cos(math.radians(deg)) / 2
         y -= math.sin(math.radians(deg)) / 2
@@ -185,7 +209,7 @@ def save(name, frames):
         im.save(folder / f"{i:02d}.png")
 
 
-body = cut_old_tail(Image.open(TOOLS / "run_body.png"))
+body = straighten_back(cut_old_tail(add_details(Image.open(TOOLS / "run_body.png"))))
 for name, gait in (("walk", WALK), ("run", RUN)):
     save(name, [draw_frame(body, k, gait) for k in range(gait["frames"])])
     print(f"{name}: {gait['frames']} frames, moves {distance(gait):.1f} px per loop, "
