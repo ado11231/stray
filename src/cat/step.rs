@@ -14,8 +14,9 @@ pub struct Step {
     pub frames: Option<usize>,
     /// Where the first frame is drawn, in sprite pixels from the left of the bar.
     pub x: i32,
-    /// How far each frame is drawn from the one before. Negative moves left.
-    pub move_per_frame: i32,
+    /// How far the last frame is drawn from the first, spread evenly over the frames in
+    /// between. Negative moves left. A looping step does not move.
+    pub distance: i32,
     /// Keeps showing the first frame instead of playing on, such as a held look up.
     pub still: bool,
 }
@@ -41,9 +42,15 @@ impl Step {
         } else {
             shown % count
         };
-        let moved = i32::try_from(shown)
-            .unwrap_or(i32::MAX)
-            .saturating_mul(self.move_per_frame);
+        let moved = match self.frames {
+            // Worked out from the whole distance each time, so no rounding builds up.
+            Some(frames) if frames > 1 => {
+                let share = i64::from(self.distance) * i64::try_from(shown).unwrap_or(0)
+                    / i64::try_from(frames - 1).unwrap_or(i64::MAX);
+                i32::try_from(share).unwrap_or(self.distance)
+            }
+            _ => 0,
+        };
         Sprite {
             pose: self.pose,
             index,
@@ -63,7 +70,7 @@ mod tests {
         backward: true,
         frames: Some(4),
         x: 100,
-        move_per_frame: 0,
+        distance: 0,
         still: false,
     };
 
@@ -85,12 +92,13 @@ mod tests {
         let walk = Step {
             pose: Pose::Walk,
             frames: Some(5),
-            move_per_frame: -13,
+            distance: -52,
             backward: false,
             ..GET_UP
         };
         assert_eq!(walk.sprite(0).x, 100);
         assert_eq!(walk.sprite(2).x, 74);
+        assert_eq!(walk.sprite(4).x, 48);
     }
 
     #[test]

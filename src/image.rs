@@ -29,6 +29,9 @@ pub struct Placement {
     pub rows: u16,
     /// Pictures on a higher layer are drawn in front, like the bowl in front of the cat.
     pub layer: u32,
+    /// How many pixels right of the cursor's cell the picture starts, so it can move
+    /// smoothly between columns.
+    pub x_offset: u32,
 }
 
 /// One window's own range of image IDs, so it only ever removes its own pictures.
@@ -72,8 +75,18 @@ pub fn show(
     for (index, chunk) in chunks.into_iter().enumerate() {
         let more = u8::from(index < last);
         let keys = if index == 0 {
-            let Placement { rows, layer } = placement;
-            format!("a=T,f=100,i={id},r={rows},z={layer},C=1,q=2,m={more}")
+            let Placement {
+                rows,
+                layer,
+                x_offset,
+            } = placement;
+            // Most pictures start right at the cell, so the offset is left out then.
+            let offset = if x_offset > 0 {
+                format!(",X={x_offset}")
+            } else {
+                String::new()
+            };
+            format!("a=T,f=100,i={id},r={rows},z={layer}{offset},C=1,q=2,m={more}")
         } else {
             format!("m={more}")
         };
@@ -118,7 +131,11 @@ mod tests {
     use super::*;
     use anyhow::{Context, Result};
 
-    const PLACEMENT: Placement = Placement { rows: 2, layer: 1 };
+    const PLACEMENT: Placement = Placement {
+        rows: 2,
+        layer: 1,
+        x_offset: 0,
+    };
 
     /// Splits written output into the key list and the data of each graphics command.
     fn commands(written: &[u8]) -> Result<Vec<(&str, &str)>> {
@@ -144,6 +161,21 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, "a=T,f=100,i=7,r=2,z=1,C=1,q=2,m=0");
         assert_eq!(BASE64.decode(found[0].1)?, b"png");
+        Ok(())
+    }
+
+    #[test]
+    fn an_offset_moves_the_picture_inside_its_cell() -> Result<()> {
+        let mut written = Vec::new();
+        let placement = Placement {
+            x_offset: 4,
+            ..PLACEMENT
+        };
+        show(&mut written, 7, b"png", placement, false)?;
+        assert_eq!(
+            commands(&written)?[0].0,
+            "a=T,f=100,i=7,r=2,z=1,X=4,C=1,q=2,m=0"
+        );
         Ok(())
     }
 

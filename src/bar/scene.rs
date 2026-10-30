@@ -68,14 +68,22 @@ impl CellSize {
         (width > 0 && height > 0).then_some(Self { width, height })
     }
 
-    /// The column, counted from 0, that a spot `x` sprite pixels from the left falls in.
-    fn column(cell: Option<Self>, x: u32) -> u16 {
+    /// The column, counted from 0, that a spot `x` sprite pixels from the left falls in, and
+    /// how many screen pixels into that column it is. Without a known cell size, the spot
+    /// is rounded down to a whole column.
+    fn column(cell: Option<Self>, x: u32) -> (u16, u32) {
         // A frame is `BAR_ROWS` cells tall, so one sprite pixel is this big on screen.
-        let on_screen = match cell {
-            Some(cell) => x * u32::from(BAR_ROWS) * cell.height / (CANVAS_HEIGHT * cell.width),
-            None => x * u32::from(BAR_ROWS) * DEFAULT_CELL_HEIGHT_PER_WIDTH / CANVAS_HEIGHT,
+        let (column, offset) = match cell {
+            Some(cell) => {
+                let pixels = x * u32::from(BAR_ROWS) * cell.height / CANVAS_HEIGHT;
+                (pixels / cell.width, pixels % cell.width)
+            }
+            None => (
+                x * u32::from(BAR_ROWS) * DEFAULT_CELL_HEIGHT_PER_WIDTH / CANVAS_HEIGHT,
+                0,
+            ),
         };
-        u16::try_from(on_screen).unwrap_or(u16::MAX)
+        (u16::try_from(column).unwrap_or(u16::MAX), offset)
     }
 
     /// How many sprite pixels wide `columns` columns are, so the cat knows how far it can go.
@@ -166,7 +174,7 @@ impl Scene {
             Some(old) if old == self.ids.id(slot) => self.ids.id(slot + 1),
             _ => self.ids.id(slot),
         };
-        let column = CellSize::column(cell, sprite.x);
+        let (column, x_offset) = CellSize::column(cell, sprite.x);
         writer.write_all(escape::move_cursor(bar_row, column + 1).as_bytes())?;
         let png = self
             .frames
@@ -175,6 +183,7 @@ impl Scene {
         let placement = Placement {
             rows: BAR_ROWS,
             layer,
+            x_offset,
         };
         image::show(writer, id, png, placement, false)?;
         if let Some(old) = self.shown[thing].replace(id) {
@@ -216,9 +225,14 @@ mod tests {
             width: 10,
             height: 20,
         });
-        assert_eq!(CellSize::column(cell, 0), 0);
-        assert_eq!(CellSize::column(cell, HOME_X), 4);
-        assert_eq!(CellSize::column(None, HOME_X), 4);
+        // 222 sprite pixels are 41 screen pixels: column 4, and 1 pixel into it.
+        assert_eq!(CellSize::column(cell, 0), (0, 0));
+        assert_eq!(CellSize::column(cell, HOME_X), (4, 1));
+        assert_eq!(CellSize::column(None, HOME_X), (4, 0));
+        // One sprite pixel more is still in the same column, a little further in.
+        let (column, offset) = CellSize::column(cell, HOME_X + 6);
+        assert_eq!(column, 4);
+        assert!(offset > 1);
     }
 
     #[test]

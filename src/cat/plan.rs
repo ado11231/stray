@@ -58,7 +58,7 @@ impl Plan {
             backward,
             frames: Some(pose.frame_count()),
             x: self.x,
-            move_per_frame: 0,
+            distance: 0,
             still: false,
         });
     }
@@ -71,7 +71,7 @@ impl Plan {
             backward: false,
             frames: None,
             x: self.x,
-            move_per_frame: 0,
+            distance: 0,
             still: false,
         });
     }
@@ -125,19 +125,23 @@ impl Plan {
         self = self.turn_to(facing_toward(distance));
         // Turning moved the spot a little, so measure again from there.
         let distance = x - self.x;
-        let frames = distance
-            .unsigned_abs()
-            .div_ceil(stride.unsigned_abs())
-            .max(1);
-        let move_per_frame = distance / i32::try_from(frames).unwrap_or(i32::MAX);
+        // Whole half strides, so the cat never stops partway through a step. Half a
+        // stride of the walk is 4 frames. The stride stretches a little to fit.
+        let half_stride = (pose.frame_count() / 2).max(1);
+        let steps = usize::try_from(distance.unsigned_abs().div_ceil(stride.unsigned_abs()))
+            .unwrap_or(usize::MAX)
+            .div_ceil(half_stride)
+            .max(1)
+            * half_stride;
         self.steps.push(Step {
             pose,
             facing: self.facing,
             backward: false,
-            frames: Some(usize::try_from(frames).unwrap_or(usize::MAX)),
-            // The first frame is already a stride out, so the last one lands on the spot.
-            x: self.x + move_per_frame,
-            move_per_frame,
+            // One frame more than steps: the first is drawn where the cat stood, and the
+            // last lands on the spot.
+            frames: Some(steps + 1),
+            x: self.x,
+            distance,
             still: false,
         });
         self.x = x;
@@ -167,14 +171,16 @@ impl Plan {
     pub fn eat(mut self, length: Duration) -> Self {
         let seat = self.x;
         let lean_frames = Pose::Lean.frame_count();
-        let lean_frames_signed = i32::try_from(lean_frames).unwrap_or(i32::MAX);
+        // Each lean frame scoots one more step, from one step in to all of them.
+        let lean_steps = i32::try_from(lean_frames).unwrap_or(i32::MAX);
+        let lean_distance = LEAN_STEP * (lean_steps - 1);
         let mut lean = Step {
             pose: Pose::Lean,
             facing: self.facing,
             backward: false,
             frames: Some(lean_frames),
             x: seat + LEAN_STEP,
-            move_per_frame: LEAN_STEP,
+            distance: lean_distance,
             still: false,
         };
         self.steps.push(lean);
@@ -185,12 +191,12 @@ impl Plan {
             backward: false,
             frames: Some(usize::try_from(eat_frames).unwrap_or(usize::MAX).max(1)),
             x: seat + EAT_OFFSET,
-            move_per_frame: 0,
+            distance: 0,
             still: false,
         });
         lean.backward = true;
-        lean.x = seat + LEAN_STEP * lean_frames_signed;
-        lean.move_per_frame = -LEAN_STEP;
+        lean.x = seat + LEAN_STEP * lean_steps;
+        lean.distance = -lean_distance;
         self.steps.push(lean);
         self.sit()
     }
@@ -203,20 +209,22 @@ impl Plan {
             self.play(Pose::Wiggle, false);
         }
         let frames = Pose::Pounce.frame_count();
-        let move_per_frame = match facing {
+        let step = match facing {
             Facing::Right => POUNCE_STEP,
             Facing::Left => -POUNCE_STEP,
         };
+        // The first frame is already one step out, and each frame after goes one more.
+        let leaps = i32::try_from(frames).unwrap_or(0);
         self.steps.push(Step {
             pose: Pose::Pounce,
             facing,
             backward: false,
             frames: Some(frames),
-            x: self.x + move_per_frame,
-            move_per_frame,
+            x: self.x + step,
+            distance: step * (leaps - 1),
             still: false,
         });
-        self.x += move_per_frame * i32::try_from(frames).unwrap_or(0);
+        self.x += step * leaps;
         self.play(Pose::Bat, false);
         self.play(Pose::Crouch, true);
         self.sit_down().sit()
@@ -237,7 +245,7 @@ impl Plan {
             backward: true,
             frames: None,
             x: self.x,
-            move_per_frame: 0,
+            distance: 0,
             still: true,
         });
         self
@@ -262,7 +270,7 @@ impl Plan {
             backward: true,
             frames: Some(frames.max(1)),
             x: self.x,
-            move_per_frame: 0,
+            distance: 0,
             still: true,
         });
         self.play(pose, true);
@@ -345,7 +353,7 @@ mod tests {
             .find(|step| step.pose == Pose::Walk)
             .ok_or_else(|| anyhow::anyhow!("the cat should walk"))?;
         assert_eq!(walk.facing, Facing::Left);
-        assert!(walk.move_per_frame < 0);
+        assert!(walk.distance < 0);
         assert_eq!(
             steps.iter().filter(|step| step.pose == Pose::Turn).count(),
             2
@@ -360,9 +368,27 @@ mod tests {
         let frames = walk.frames.ok_or_else(|| anyhow::anyhow!("walks end"))?;
         let first = i32::try_from(walk.sprite(0).x)?;
         let last = i32::try_from(walk.sprite(frames - 1).x)?;
-        assert!(first > 100, "the first frame steps out");
-        // Only the rounding of the stride is left over, less than one pixel per frame.
-        assert!((150 - i32::try_from(frames)?..=150).contains(&last));
+        assert_eq!(first, 100, "the first frame is where the cat stood");
+        assert_eq!(last, 150, "the last frame is on the spot");
+        // It stops on a whole half stride, frame 0 or 4 of the walk.
+        assert_eq!(walk.sprite(frames - 1).index % 4, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_long_walk_across_a_wide_bar_lands_on_its_spot() -> anyhow::Result<()> {
+        let steps = Plan::from(222, Facing::Right).walk_to(3991).steps();
+        let walk = steps.first().ok_or_else(|| anyhow::anyhow!("a walk"))?;
+        let frames = walk.frames.ok_or_else(|| anyhow::anyhow!("walks end"))?;
+        assert_eq!(walk.sprite(frames - 1).x, 3991);
+        // Every frame moves about one stride, never a big jump.
+        for shown in 1..frames {
+            let moved = walk.sprite(shown).x - walk.sprite(shown - 1).x;
+            assert!(
+                (1..=u32::try_from(WALK_STRIDE)?).contains(&moved),
+                "frame {shown}"
+            );
+        }
         Ok(())
     }
 

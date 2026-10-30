@@ -460,7 +460,7 @@ const IDLE: Step = Step {
     backward: false,
     frames: None,
     x: 0,
-    move_per_frame: 0,
+    distance: 0,
     still: false,
 };
 
