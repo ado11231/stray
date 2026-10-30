@@ -6,6 +6,7 @@ use crate::cat::Cat;
 use crate::escape;
 use crate::frames::Frames;
 use crate::output_boundary::OutputBoundary;
+use crate::schedule::Clock;
 use portable_pty::PtySize;
 use std::io::{self, Write};
 use std::num::NonZeroU16;
@@ -58,7 +59,10 @@ impl<W: Write> Output<W> {
             changed_region: false,
             scene: (images_supported && !inside_tmux).then(|| Scene::new(Frames::new(palette))),
             cell: cell_size(size),
-            cat: Cat::new(Instant::now()),
+            cat: Cat::new(
+                Instant::now(),
+                Clock::from_env(Instant::now()).map_err(io::Error::other)?,
+            ),
         };
         if let Some(screen) = &mut output.screen {
             let last_row = shell.rows.saturating_sub(1);
@@ -133,6 +137,7 @@ impl<W: Write> Output<W> {
             // The bar is drawn whole at the next safe point, or the shell is mid sequence.
             return Ok(Some(now + BUSY_RETRY));
         }
+        self.cat.tick(now);
         let next_change = self.cat.next_change(now);
         let screen = parser.screen();
         let rows = screen.size().0.get();

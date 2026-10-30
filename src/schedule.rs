@@ -132,13 +132,18 @@ impl Clock {
                 })?,
             None => 1,
         };
-        Ok(Self {
+        Ok(Self::starting_at(start, speed, now))
+    }
+
+    /// A clock that shows `start` at `now` and runs `speed` times faster than real time.
+    pub fn starting_at(start: Time, speed: u32, now: Instant) -> Self {
+        Self {
             test: Some(TestClock {
                 start,
-                speed,
+                speed: speed.max(1),
                 opened: now,
             }),
-        })
+        }
     }
 
     /// The time on the clock at `now`.
