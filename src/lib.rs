@@ -3,4 +3,5 @@
 pub mod bar;
 pub mod escape;
 pub mod frames;
+pub mod image;
 pub mod output_boundary;
