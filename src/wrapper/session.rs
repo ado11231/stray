@@ -48,19 +48,15 @@ pub struct ShellSession {
 impl ShellSession {
     #[cfg(test)]
     pub fn start(command: CommandBuilder) -> Result<Self> {
-        Self::start_with_bar(command, false, None)
+        Self::start_with_bar(command, bar::Setup::default())
     }
 
     /// Starts the shell in a new PTY, leaving room for the bar when images are supported.
-    pub fn start_with_bar(
-        mut command: CommandBuilder,
-        images_supported: bool,
-        cursor: Option<(u16, u16)>,
-    ) -> Result<Self> {
+    pub fn start_with_bar(mut command: CommandBuilder, setup: bar::Setup) -> Result<Self> {
         // Watch signals before raw mode, so a shutdown signal also takes the cleanup path.
         let signals = terminal::watch_signals()?;
         let size = terminal::read_size()?;
-        let pty = open_pty(bar::shell_size(size, images_supported))?;
+        let pty = open_pty(bar::shell_size(size, setup.images_supported))?;
         let tty_name = pty
             .master
             .tty_name()
@@ -77,7 +73,7 @@ impl ShellSession {
             .context("could not open PTY writer")?;
 
         let raw_mode = terminal::RawModeGuard::enable()?;
-        let output = bar::Output::new(std::io::stdout(), size, images_supported, cursor)
+        let output = bar::Output::new(std::io::stdout(), size, setup)
             .context("could not reserve bar rows")?;
 
         let shell = ShellGuard {

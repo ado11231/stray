@@ -11,7 +11,8 @@ Frames use the same 309x215 canvas as the other poses, feet on row 204.
 from PIL import Image, ImageDraw
 
 import draw_sit as cat
-from draw_sit import CANVAS, FAR, FOOT, GROUND, PAW_R, SCALE, STANDING, WHITE, big, draw_frame, save
+from draw_sit import FAR, FOOT, PAW_R, STANDING, draw_frame
+from shapes import CANVAS, GROUND, SCALE, WHITE, big, save
 from face import EAR_LINE, EAR_LINE_W
 
 MIDDLE = 156             # middle of the standing walk frame, so the turn stays in place

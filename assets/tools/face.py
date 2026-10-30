@@ -7,7 +7,8 @@ drawn SCALE times bigger.
 import numpy as np
 from PIL import Image, ImageDraw
 
-SCALE = 4
+from shapes import SCALE
+
 WHITE = (255, 255, 255)
 NOSE_BOX = (242, 132, 258, 147)  # a little bigger than the nose, so its soft edge goes too
 # each line runs from near the tip of the ear down toward its middle
