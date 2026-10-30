@@ -104,7 +104,7 @@ flowchart TD
 * A meal lasts a few minutes, at the start of meal time or when you open a window during it. Then it is free time.
 * At meal and sleep times, the cat walks to its home spot first.
 * A sleeping cat stays at its home spot, and typing does not wake it.
-* The times are starting numbers in a settings file.
+* For now the times are set in the code. A settings file may come later.
 
 ## At Rest
 
@@ -124,7 +124,7 @@ flowchart TD
 | What Is Happening | What The Cat Does |
 | --- | --- |
 | You type at the prompt | Looks up for a moment. |
-| Output is scrolling by | Sits and watches. |
+| A program is running | Sits and watches. |
 | A program has run for a long time | Naps until you are back at the prompt. |
 | A coding agent stops and waits for you | Perks up. |
 | A command fails | Flinches. Not when you stopped it with Ctrl C. |

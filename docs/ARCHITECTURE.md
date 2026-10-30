@@ -117,7 +117,7 @@ flowchart LR
 flowchart TD
     Main["main.rs<br/>reads the command line"]
     Wrap["The wrapper<br/>wrapper, terminal, screen, bar, image"]
-    Cat["The cat<br/>cat, frames, activity, schedule"]
+    Cat["The cat<br/>cat, frames, foreground, schedule"]
     Store["Saved data<br/>state, config"]
     Cmd["Commands<br/>treat, pet, quiet, name, install"]
     Main --> Wrap
@@ -186,8 +186,8 @@ sequenceDiagram
 
 | Signal | How Stray Gets It | What It Tells The Cat |
 | --- | --- | --- |
-| **Prompt mark** | The shell prints it before each prompt, with whether the last command failed. Stray removes it from the output. | You are back at the prompt, and whether to flinch. |
-| **Foreground program** | Stray asks the PTY which program is in front and looks up its name and command line with `sysinfo`. This works the same on macOS and Linux. | The shell is waiting, or a program is running, and which one. |
+| **Prompt mark** | After a command runs, Stray's own shell prints `ESC ] 7701 ; status BEL` before the prompt. Stray reads it and leaves it in the output. Terminals ignore OSC numbers they do not know. | You are back at the prompt, and whether to flinch. |
+| **Foreground program** | Stray asks the PTY which process group is in front (`tcgetpgrp`). When it changes, Stray looks up its name: `proc_name` on macOS, `/proc/<pid>/comm` on Linux. | The shell is waiting, or a program is running, and which one. |
 | **Keys** | Stray sees every key. | You are typing, so look up, or how long you have been idle. |
 | **Output** | Stray sees all output. | Something is printing, or the screen is quiet. |
 | **Full screen flag** | The screen model has it. | A program such as `vim` has the screen. |
@@ -236,8 +236,9 @@ stateDiagram-v2
 | Play | 15 | In place. |
 | Run | 10 | Across the bar, fast. |
 
-* Weights and times live in the settings file.
-* A program starting ends every action.
+* The cat rests 5 to 20 seconds between picks.
+* For now the weights and times are named constants in `cat.rs`. A settings file comes later.
+* A program starting stops new actions. An action already started finishes first.
 
 ## Drawing The Cat
 
@@ -283,13 +284,13 @@ stateDiagram-v2
 
 ## The Schedule
 
-1. Once a minute, the wrapper reads the local time.
-2. It looks the time up in the schedule from the settings file.
-3. If the part of the day changed, the brain moves to that mode.
+1. Each time the cat is settled, sitting or sleeping with nothing planned, it reads the time.
+2. It looks the time up in the schedule in `schedule.rs`.
+3. If the part of the day changed, the brain plans the way to that mode.
 
 * Nothing is saved. Every window reads the same clock, so every cat keeps the same day.
 * A meal lasts a few minutes from the moment it starts, or from when the window opens during it.
-* A test setting shifts the clock, so a whole day can be checked in a few minutes.
+* Two test settings change the clock, so a whole day can be checked in a few minutes. `STRAY_CLOCK=06:55` starts the clock at that time when the window opens. `STRAY_CLOCK_SPEED=60` runs it 60 times faster.
 * Local time with the right time zone comes from the `jiff` crate.
 
 ## How Commands Reach The Cat
@@ -423,9 +424,10 @@ stray/
 │   ├── screen.rs          the screen model and the checks that keep the bar safe
 │   ├── bar.rs             reserves the rows and draws the bar
 │   ├── image.rs           the image protocol: check, send, remove, and tmux
-│   ├── cat.rs             the cat brain: modes, actions, and movement
+│   ├── cat.rs             the cat brain: modes, actions, and reactions
+│   ├── cat/               the steps the cat plays, and the plans that build them
 │   ├── frames.rs          the cat's frames and its bowl
-│   ├── activity.rs        the signals, turned into plain facts
+│   ├── foreground.rs      which program is in front: the shell, an agent, or another
 │   ├── schedule.rs        the time of day to meal, nap, night, or free time
 │   ├── state.rs           the state file: load and save
 │   ├── config.rs          the settings file and its defaults
@@ -439,17 +441,17 @@ stray/
 | File | Purpose | Uses |
 | --- | --- | --- |
 | `main.rs` | Reads the command line with `clap`. | every command, `wrapper` |
-| `wrapper.rs` | Runs the image check and the shell in a PTY. Owns the main loop. | `terminal`, `screen`, `image`, `bar`, `cat`, `activity`, `schedule`, `state` |
+| `wrapper.rs` | Runs the image check and the shell in a PTY. Owns the main loop. | `terminal`, `screen`, `image`, `bar`, `foreground`, `state` |
 | `escape.rs` | Names the terminal codes Stray sends and reads, such as the scroll region reset. | none |
 | `env.rs` | Names the environment variables Stray reads, such as `SHELL` and `TMUX`. | none |
 | `terminal.rs` | Raw mode, size, and resizes of the real terminal. Restores it on exit. | none |
 | `screen.rs` | The screen model. Spots clears, region resets, full screen views, and batched updates. Stops cursor moves into the bar. Removes the prompt mark. | none |
 | `bar.rs` | Sets the scroll region, draws the bar, and restores the cursor. | `screen`, `image`, `frames` |
 | `image.rs` | The image check. Sends, shows, and removes frames. Inside tmux, wraps codes for passthrough and prints placeholders. | none |
-| `cat.rs` | Picks the mode, resting action, position, and frame. | `activity`, `schedule`, `frames` |
+| `cat.rs` | Picks the mode, resting action, reaction, position, and frame. | `foreground`, `schedule`, `frames` |
 | `frames.rs` | Holds every frame. Colors and flips them. | none |
-| `activity.rs` | Tracks typing, idle time, output, and the foreground program. | none |
-| `schedule.rs` | Turns the time of day into meal, nap, night, or free time. | `config` |
+| `foreground.rs` | Tells whether the shell, a coding agent, or another program is in front. | none |
+| `schedule.rs` | Turns the time of day into meal, nap, night, or free time. Holds the test clock. | none |
 | `state.rs` | Loads and saves the state file. | none |
 | `config.rs` | Reads the settings file and supplies defaults. | none |
 | `shell.rs` | The scripts for `stray init`, the startup line, the name function, and the checks for the mark, ssh, and tmux. | `state` |
@@ -480,7 +482,8 @@ stray/
 | `serde`, `serde_json`, and `toml` | The state and settings files. |
 | `directories` | Finding the config and data folders. |
 | `jiff` | The local time, for the schedule. |
-| `sysinfo` | The name and command line of the foreground program, on macOS and Linux. |
+| `fastrand` | Picking resting actions and spots at random. |
+| `libc` | Asking the PTY which program is in front, and that program's name. |
 | `anyhow` | Errors. |
 
 ### Tests

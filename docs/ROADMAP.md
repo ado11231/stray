@@ -2,7 +2,7 @@
 
 * What Stray does today, what has been tested, and what comes next.
 * A feature is complete only after it has run in a real terminal.
-* Last updated October 28, 2026.
+* Last updated October 30, 2026.
 
 ## Contents
 
@@ -22,7 +22,7 @@
 | 0 | An image test: a cat running along the bottom rows | Complete |
 | 1 | A wrapper you cannot notice | Complete, per user report on October 14 |
 | 2 | The image check, and the bar with a cat that sits still | Image check and basic row reservation implemented; terminal checks pending |
-| 3 | The cat's day, resting actions, and reactions | Planned |
+| 3 | The cat's day, resting actions, and reactions | Done in code October 30, 2026; terminal checks pending |
 | 4 | Commands to treat, pet, quiet, and name the cat | Planned |
 | 5 | A public release | Planned |
 
@@ -104,17 +104,18 @@ flowchart LR
   * A program that shows its own images, such as `kitten icat`, and the cat do not disturb each other.
   * An ssh session shows one cat, in your own bar.
 
-## Planned
-
 ### Phase 3: The Cat's Day
 
-1. Read the local time and turn it into meal, nap, night, or free time.
-2. Add the test setting that shifts the clock.
-3. Add the modes: free, watching, eating, and sleeping.
-4. Add the resting actions: sit, walk, play, and run.
-5. Add the prompt mark to the bash and zsh setup, to know when a command failed.
-6. Read the foreground program.
-7. Add the reactions: looking up at a key, coding agents, long runs, and failed commands.
+* Done in code October 30, 2026. Some steps were tried in a real terminal as they
+  were built. The full checklist is still pending: see [Phase 3 testing](PHASE3-TESTING.md).
+
+1. Read the local time and turn it into meal, nap, night, or free time. Done.
+2. Add the test setting that shifts the clock. Done: `STRAY_CLOCK` and `STRAY_CLOCK_SPEED`.
+3. Add the modes: free, watching, eating, and sleeping. Done.
+4. Add the resting actions: sit, walk, play, and run. Done. Play has no ball yet.
+5. Add the prompt mark to the bash and zsh setup, to know when a command failed. Done. The mark stays in the output.
+6. Read the foreground program. Done.
+7. Add the reactions: looking up at a key, coding agents, long runs, and failed commands. Done.
 8. Draw the rest of the frames in the style of the sleeping cat, and the bowl. Done October 29, 2026: every pose has a first version.
 
 * **Done when:**
@@ -122,6 +123,8 @@ flowchart LR
   * Typing does not wake a sleeping cat.
   * The cat looks up when you type, and flinches when a command fails.
   * Left alone for ten minutes in free time, the cat does each resting action.
+
+## Planned
 
 ### Phase 4: Commands
 
@@ -164,18 +167,34 @@ flowchart LR
 2. kitty and VS Code may handle the scroll region differently.
 3. Coding agents redraw the screen often.
 4. The wrapper may slow typing.
-5. Tools that run on Node may show the name `node`.
+5. Tools that run on Node may show the name `node`, so they would not count as coding agents.
 6. Two rows may be too much in the short VS Code panel.
 7. Placeholders inside tmux may only work in kitty.
 8. Many tmux panes mean many bars, which may feel crowded.
+9. Run is the rarest action. In tests, a cat left alone for ten minutes skipped it about 1 time in 40.
+10. Any bytes from the terminal count as a key, including focus and mouse reports, so the cat may look up at them.
 
 ## Open Questions
 
 1. Are the schedule times right?
 2. Should `stray quiet` give the two rows back to the shell?
 3. Is two rows tall enough for the cat?
+4. Is a 3 minute meal and a 2 minute wait before a nap right?
 
 ## Test Record
+
+### Phase 3: October 30, 2026, The Cat's Day
+
+* Automated checks pass locally on macOS: formatting, Clippy with warnings denied,
+  and every test.
+* New tests cover the schedule and the test clock, the steps and plans, every mode,
+  the resting actions, looking up, flinching, perking up, and napping on long runs.
+* PTY tests run real bash 3.2 and zsh to check the prompt mark, and a job control
+  shell to check the foreground program, including a program named `claude`.
+* The user tried some steps in a real terminal as they were built, and reported
+  that they worked: the cat moves on its own, looks up while typing, flinches at a
+  failed command, and perks up when Claude Code waits. The terminal was not
+  recorded, and the full checklist has not been run.
 
 ### Phase 2: October 14, 2026, Image Check
 
