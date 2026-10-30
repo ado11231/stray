@@ -7,3 +7,4 @@ pub mod escape;
 pub mod frames;
 pub mod image;
 pub mod output_boundary;
+pub mod schedule;
