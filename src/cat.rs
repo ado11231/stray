@@ -31,6 +31,16 @@ const LOOK_HOLD: Duration = Duration::from_millis(900);
 /// How long the cat holds its flinch when a command fails.
 const FLINCH_HOLD: Duration = Duration::from_millis(300);
 
+/// How long the cat holds its perk up when a coding agent waits for you.
+const PERK_HOLD: Duration = Duration::from_millis(1500);
+
+/// A coding agent that has printed nothing for this long is waiting for you.
+const AGENT_QUIET: Duration = Duration::from_secs(4);
+
+/// Output that goes on this long after the last key is the agent working, not the echo of
+/// your typing.
+const AGENT_WORK: Duration = Duration::from_secs(1);
+
 /// The exit status of a command stopped with Ctrl C. The cat does not flinch at it.
 const CTRL_C_STATUS: i32 = 130;
 
@@ -95,6 +105,10 @@ pub struct Cat {
     front: Front,
     /// When the program in front started, if one is running.
     program_started: Option<Instant>,
+    /// When the shell last printed something.
+    last_output: Option<Instant>,
+    /// The output the cat last perked up after, so it perks up once each time an agent waits.
+    perked_after: Option<Instant>,
     rng: fastrand::Rng,
 }
 
@@ -119,6 +133,8 @@ impl Cat {
             full_screen: false,
             front: Front::Shell,
             program_started: None,
+            last_output: None,
+            perked_after: None,
             rng: fastrand::Rng::new(),
         };
         cat.follow(plan, now);
@@ -162,6 +178,11 @@ impl Cat {
         self.program_started = (front != Front::Shell).then_some(now);
     }
 
+    /// The shell printed something.
+    pub fn output_seen(&mut self, now: Instant) {
+        self.last_output = Some(now);
+    }
+
     /// A command finished with `status` and the prompt is back. A sitting cat flinches when
     /// the command failed, unless it was stopped with Ctrl C.
     pub fn command_finished(&mut self, status: i32, now: Instant) {
@@ -175,7 +196,10 @@ impl Cat {
         }
         let step = *self.step();
         self.rest_until = None;
-        self.follow(Plan::from(step.x, step.facing).flinch(FLINCH_HOLD), now);
+        self.follow(
+            Plan::from(step.x, step.facing).react(Pose::Flinch, FLINCH_HOLD),
+            now,
+        );
     }
 
     /// Moves the cat on to `now`: finishes steps that are done, and when it is settled,
@@ -264,6 +288,7 @@ impl Cat {
         if wanted == self.mode {
             if wanted == Mode::Watching {
                 self.nap_after_a_long_run(now);
+                self.perk_up_for_a_waiting_agent(now);
             }
             return;
         }
@@ -294,6 +319,27 @@ impl Cat {
         let step = *self.step();
         if self.front == Front::Program && long_run && step.pose == Pose::Sit {
             self.follow(Plan::from(step.x, step.facing).sleep(), now);
+        }
+    }
+
+    /// When a coding agent has worked and then gone quiet, it is waiting for you, so the cat
+    /// perks up once.
+    fn perk_up_for_a_waiting_agent(&mut self, now: Instant) {
+        let Some(output) = self.last_output else {
+            return;
+        };
+        let quiet = now.saturating_duration_since(output) >= AGENT_QUIET;
+        let worked = self
+            .last_key
+            .is_none_or(|key| output.saturating_duration_since(key) >= AGENT_WORK);
+        let step = *self.step();
+        let waiting = self.front == Front::Agent && quiet && worked;
+        if waiting && self.perked_after != Some(output) && step.pose == Pose::Sit {
+            self.perked_after = Some(output);
+            self.follow(
+                Plan::from(step.x, step.facing).react(Pose::PerkUp, PERK_HOLD),
+                now,
+            );
         }
     }
 
@@ -753,5 +799,56 @@ mod tests {
         assert_eq!(cat.mode(), Mode::Watching);
         cat.command_finished(1, now);
         assert_eq!(cat.sprite(now).pose, Pose::Flinch);
+    }
+
+    /// A cat watching a coding agent that started at `start`.
+    fn cat_with_an_agent(start: Instant) -> Cat {
+        let mut cat = free_cat(start, 1);
+        cat.set_front(Front::Agent, start);
+        cat.tick(start);
+        cat
+    }
+
+    #[test]
+    fn the_cat_perks_up_once_when_an_agent_waits_for_you() {
+        let start = Instant::now();
+        let mut cat = cat_with_an_agent(start);
+        cat.key_pressed(start);
+        // The agent works for a while after the last key, then goes quiet.
+        let worked = start + AGENT_WORK * 2;
+        cat.output_seen(worked);
+
+        let (poses, _) = watch(&mut cat, start, AGENT_WORK * 2 + AGENT_QUIET / 2);
+        assert!(!poses.contains(&Pose::PerkUp), "still working");
+        let now = worked + AGENT_QUIET / 2;
+        let (poses, _) = watch(&mut cat, now, AGENT_QUIET + PERK_HOLD * 2);
+        assert!(poses.contains(&Pose::PerkUp));
+        assert_eq!(poses.last(), Some(&Pose::Sit));
+
+        // Still quiet, so it does not perk up again.
+        let now = now + AGENT_QUIET + PERK_HOLD * 2;
+        let (poses, _) = watch(&mut cat, now, Duration::from_secs(30));
+        assert!(!poses.contains(&Pose::PerkUp));
+    }
+
+    #[test]
+    fn the_echo_of_your_typing_is_not_the_agent_working() {
+        let start = Instant::now();
+        let mut cat = cat_with_an_agent(start);
+        // Each key is echoed right away, then you stop typing.
+        cat.key_pressed(start);
+        cat.output_seen(start + Duration::from_millis(5));
+        let (poses, _) = watch(&mut cat, start, AGENT_QUIET * 3);
+        assert!(!poses.contains(&Pose::PerkUp));
+    }
+
+    #[test]
+    fn other_programs_do_not_make_the_cat_perk_up() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.set_front(Front::Program, start);
+        cat.output_seen(start);
+        let (poses, _) = watch(&mut cat, start, AGENT_QUIET * 3);
+        assert!(!poses.contains(&Pose::PerkUp));
     }
 }

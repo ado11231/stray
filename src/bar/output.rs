@@ -264,6 +264,7 @@ fn at_least_one(size: u16) -> NonZeroU16 {
 impl<W: Write> Write for Output<W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.writer.write_all(bytes)?;
+        self.cat.output_seen(Instant::now());
         if let Some(screen) = &mut self.screen {
             screen.process(bytes);
             self.boundary.feed(bytes);
