@@ -54,12 +54,17 @@ impl Foreground {
         {
             return front;
         }
-        let front = match process_name(group) {
-            Some(name) if CODING_AGENTS.contains(&name.as_str()) => Front::Agent,
-            _ => Front::Program,
-        };
+        let front = front_for(process_name(group).as_deref());
         self.last = Some((group, front));
         front
+    }
+}
+
+/// What a running program is, from its name. A program with no name found is just a program.
+fn front_for(name: Option<&str>) -> Front {
+    match name {
+        Some(name) if CODING_AGENTS.contains(&name) => Front::Agent,
+        _ => Front::Program,
     }
 }
 
@@ -118,7 +123,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
             front = foreground.front();
         }
-        child.kill()?;
+        // Close the terminal first. On macOS a shell cannot finish exiting while its
+        // terminal holds output that nobody reads, so waiting would hang.
+        drop(pty.master);
+        // Closing the terminal hangs up the shell, so it may already be gone.
+        let _ = child.kill();
         child.wait()?;
         Ok(front)
     }
@@ -133,15 +142,11 @@ mod tests {
     }
 
     #[test]
-    fn a_coding_agent_is_found_by_name() -> Result<()> {
-        let folder = std::env::temp_dir().join(format!("stray-agent-{}", std::process::id()));
-        std::fs::create_dir_all(&folder)?;
-        let agent = folder.join("claude");
-        std::fs::copy("/bin/sleep", &agent)?;
-        let front = front_while_running(&agent);
-        std::fs::remove_dir_all(&folder)?;
-        assert_eq!(front?, Front::Agent);
-        Ok(())
+    fn coding_agents_are_found_by_name() {
+        assert_eq!(front_for(Some("claude")), Front::Agent);
+        assert_eq!(front_for(Some("codex")), Front::Agent);
+        assert_eq!(front_for(Some("vim")), Front::Program);
+        assert_eq!(front_for(None), Front::Program);
     }
 
     #[test]
