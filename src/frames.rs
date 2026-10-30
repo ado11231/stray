@@ -23,6 +23,9 @@ const BYTES_PER_PIXEL: usize = 4;
 /// sprite pixels can be turned into a spot on screen.
 pub const CANVAS_HEIGHT: u32 = 215;
 
+/// Every cat frame is this many pixels wide.
+pub const CANVAS_WIDTH: u32 = 309;
+
 /// A pose of the cat, or a thing in its bar. Each is named after its folder in
 /// `assets/sprites`. To add one, add it here, to `ALL`, and to `folder`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -150,6 +153,16 @@ pub enum Facing {
     Left,
 }
 
+impl Facing {
+    /// The other way.
+    pub fn opposite(self) -> Self {
+        match self {
+            Facing::Right => Facing::Left,
+            Facing::Left => Facing::Right,
+        }
+    }
+}
+
 /// One frame of a pose at a spot in the bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sprite {
@@ -222,7 +235,7 @@ mod tests {
     use super::*;
 
     /// Every frame shares one canvas, so a frame can be drawn at a fixed spot.
-    const CANVAS: (u32, u32) = (309, CANVAS_HEIGHT);
+    const CANVAS: (u32, u32) = (CANVAS_WIDTH, CANVAS_HEIGHT);
 
     const PALETTE: Palette = Palette {
         text: [200, 180, 160],

@@ -77,6 +77,17 @@ impl CellSize {
         };
         u16::try_from(on_screen).unwrap_or(u16::MAX)
     }
+
+    /// How many sprite pixels wide `columns` columns are, so the cat knows how far it can go.
+    pub fn sprite_width(cell: Option<Self>, columns: u16) -> u32 {
+        let (width, height) = match cell {
+            Some(cell) => (cell.width, cell.height),
+            None => (1, DEFAULT_CELL_HEIGHT_PER_WIDTH),
+        };
+        let pixels = u64::from(columns) * u64::from(width) * u64::from(CANVAS_HEIGHT);
+        let per_sprite_pixel = u64::from(BAR_ROWS) * u64::from(height);
+        u32::try_from(pixels / per_sprite_pixel.max(1)).unwrap_or(u32::MAX)
+    }
 }
 
 /// The things in the bar and the pictures showing them now.
@@ -208,6 +219,19 @@ mod tests {
         assert_eq!(CellSize::column(cell, 0), 0);
         assert_eq!(CellSize::column(cell, HOME_X), 4);
         assert_eq!(CellSize::column(None, HOME_X), 4);
+    }
+
+    #[test]
+    fn columns_turn_into_sprite_pixels() {
+        // Cells 10 px wide and 20 px tall: a frame is 40 px high, so 80 columns (800 px)
+        // hold 800 / 40 * 215 sprite pixels.
+        let cell = Some(CellSize {
+            width: 10,
+            height: 20,
+        });
+        assert_eq!(CellSize::sprite_width(cell, 80), 4300);
+        assert_eq!(CellSize::sprite_width(None, 80), 4300);
+        assert_eq!(CellSize::sprite_width(cell, 0), 0);
     }
 
     #[test]

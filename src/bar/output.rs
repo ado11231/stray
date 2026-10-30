@@ -64,6 +64,9 @@ impl<W: Write> Output<W> {
                 Clock::from_env(Instant::now()).map_err(io::Error::other)?,
             ),
         };
+        output
+            .cat
+            .set_bar_width(CellSize::sprite_width(output.cell, size.cols));
         if let Some(screen) = &mut output.screen {
             let last_row = shell.rows.saturating_sub(1);
             let last_column = shell.cols.saturating_sub(1);
@@ -87,6 +90,8 @@ impl<W: Write> Output<W> {
         let shell = shell_size(size, self.screen.is_some());
         self.terminal_size = size;
         self.cell = cell_size(size);
+        self.cat
+            .set_bar_width(CellSize::sprite_width(self.cell, size.cols));
         if let Some(screen) = &mut self.screen {
             screen.set_size(at_least_one(shell.rows), at_least_one(shell.cols));
             self.pending = self.changed_region || shell.rows != size.rows;

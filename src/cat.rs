@@ -1,15 +1,17 @@
 //! The cat brain: what the cat is doing, where it is, and which frame it shows.
 //!
 //! The cat follows a list of steps. When it reaches a step that loops, such as sitting or
-//! sleeping, it is settled, and it checks the clock to see what it should do next.
+//! sleeping, it is settled, and it checks the clock to see what it should do next. In free
+//! time it rests a while, then picks a resting action at random.
 
 mod plan;
 mod step;
 
-use crate::frames::{Facing, Pose, Sprite};
+use crate::frames::{CANVAS_WIDTH, Facing, Pose, Sprite};
 use crate::schedule::{Clock, DayPart};
-use plan::Plan;
+use plan::{Plan, facing_toward};
 use std::collections::VecDeque;
+use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 use step::Step;
 
@@ -21,6 +23,31 @@ const EAT_SPOT: i32 = 263;
 
 /// How long the cat eats at each meal.
 const MEAL_LENGTH: Duration = Duration::from_secs(3 * 60);
+
+/// How long the cat sits still in free time before it picks a resting action, in seconds.
+/// Short enough that it does each action within about ten minutes.
+const REST_SECONDS: RangeInclusive<u64> = 5..=20;
+
+/// Something the cat does in free time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    /// Stays sitting, blinking and flicking its tail.
+    Sit,
+    /// Strolls to a new spot in the bar.
+    Walk,
+    /// Crouches, wiggles, and pounces.
+    Play,
+    /// Dashes to the far end of the bar.
+    Run,
+}
+
+/// Each resting action and how likely it is, as a share of the total.
+const ACTIONS: [(Action, u32); 4] = [
+    (Action::Sit, 55),
+    (Action::Walk, 20),
+    (Action::Play, 15),
+    (Action::Run, 10),
+];
 
 /// What the cat is busy with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +68,11 @@ pub struct Cat {
     started: Instant,
     /// The meal the cat already ate, so it eats once per meal time.
     fed: Option<DayPart>,
+    /// How wide the bar is, in sprite pixels. The cat stays inside it.
+    bar_width: u32,
+    /// In free time, when the cat stops resting and picks an action.
+    rest_until: Option<Instant>,
+    rng: fastrand::Rng,
 }
 
 impl Cat {
@@ -58,6 +90,9 @@ impl Cat {
             steps: VecDeque::new(),
             started: now,
             fed: None,
+            bar_width: 0,
+            rest_until: None,
+            rng: fastrand::Rng::new(),
         };
         cat.follow(plan, now);
         cat
@@ -66,6 +101,11 @@ impl Cat {
     /// What the cat is busy with.
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    /// Sets how wide the bar is, in sprite pixels, when the window opens or changes size.
+    pub fn set_bar_width(&mut self, width: u32) {
+        self.bar_width = width;
     }
 
     /// Moves the cat on to `now`: finishes steps that are done, and when it is settled,
@@ -88,6 +128,10 @@ impl Cat {
         }
         if self.step().frames.is_none() {
             self.check_the_clock(now);
+        }
+        // The clock may have given the cat something to do, so check it is still settled.
+        if self.mode == Mode::Free && self.step().frames.is_none() {
+            self.rest(now);
         }
     }
 
@@ -135,7 +179,80 @@ impl Cat {
             Mode::Sleeping => plan.go_to(home_x(), Facing::Right).sleep(),
         };
         self.mode = wanted;
+        self.rest_until = None;
         self.follow(plan, now);
+    }
+
+    /// In free time, rests a while, then picks a resting action.
+    fn rest(&mut self, now: Instant) {
+        let Some(until) = self.rest_until else {
+            let seconds = self.rng.u64(REST_SECONDS);
+            self.rest_until = Some(now + Duration::from_secs(seconds));
+            return;
+        };
+        if now < until {
+            return;
+        }
+        // The next rest starts once the action is done and the cat is settled again.
+        self.rest_until = None;
+        let action = self.pick_action();
+        self.act(action, now);
+    }
+
+    /// Picks a resting action at random, by weight.
+    fn pick_action(&mut self) -> Action {
+        let total: u32 = ACTIONS.iter().map(|(_, weight)| weight).sum();
+        let mut roll = self.rng.u32(0..total);
+        for (action, weight) in ACTIONS {
+            if roll < weight {
+                return action;
+            }
+            roll -= weight;
+        }
+        Action::Sit
+    }
+
+    /// Plans a resting action from where the cat sits. Without room to move, it stays put.
+    fn act(&mut self, action: Action, now: Instant) {
+        let step = *self.step();
+        let (x, facing) = (step.x, step.facing);
+        let (left, right) = (home_x(), self.right_edge());
+        if right <= left {
+            return;
+        }
+        let plan = Plan::from(x, facing);
+        let plan = match action {
+            Action::Sit => return,
+            Action::Walk => {
+                let to = self.rng.i32(left..=right);
+                plan.go_to(to, facing_toward(to - x)).sit()
+            }
+            Action::Run => {
+                // Dash to whichever end is farther away.
+                let to = if x - left > right - x { left } else { right };
+                plan.get_up().run_to(to).sit_down().sit()
+            }
+            Action::Play => {
+                let ahead = match facing {
+                    Facing::Right => x + Plan::pounce_length(),
+                    Facing::Left => x - Plan::pounce_length(),
+                };
+                // Without room ahead, it turns and pounces the other way.
+                let facing = if (left..=right).contains(&ahead) {
+                    facing
+                } else {
+                    facing.opposite()
+                };
+                plan.pounce(facing)
+            }
+        };
+        self.follow(plan, now);
+    }
+
+    /// The farthest spot right the cat can be drawn at with all of it in the bar.
+    fn right_edge(&self) -> i32 {
+        let edge = self.bar_width.saturating_sub(CANVAS_WIDTH);
+        i32::try_from(edge).unwrap_or(i32::MAX)
     }
 
     /// Starts on a new list of steps at `now`.
@@ -295,5 +412,83 @@ mod tests {
         assert_eq!(cat.next_change(start), start + frame_time);
         assert_eq!(cat.next_change(start + frame_time / 2), start + frame_time);
         assert_eq!(cat.next_change(start + frame_time), start + frame_time * 2);
+    }
+
+    /// The bar in an 80 column window with cells twice as tall as wide.
+    const BAR_WIDTH: u32 = 4300;
+
+    /// A cat in free time, on a real speed clock so no meal or nap comes along.
+    fn free_cat(now: Instant, seed: u64) -> Cat {
+        let mut cat = Cat::new(now, Clock::starting_at(time(10, 0, 0, 0), 1, now));
+        cat.rng = fastrand::Rng::with_seed(seed);
+        cat.set_bar_width(BAR_WIDTH);
+        cat
+    }
+
+    /// Ticks the cat frame by frame for `length`, and returns every pose it showed and the
+    /// spots it was drawn at.
+    fn watch(cat: &mut Cat, start: Instant, length: Duration) -> (Vec<Pose>, Vec<u32>) {
+        let (mut poses, mut spots) = (Vec::new(), Vec::new());
+        let mut now = start;
+        while now < start + length {
+            now = cat.next_change(now);
+            cat.tick(now);
+            let sprite = cat.sprite(now);
+            poses.push(sprite.pose);
+            spots.push(sprite.x);
+        }
+        (poses, spots)
+    }
+
+    #[test]
+    fn left_alone_in_free_time_the_cat_does_each_action() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        let (poses, _) = watch(&mut cat, start, Duration::from_secs(10 * 60));
+        for pose in [Pose::Sit, Pose::Walk, Pose::Pounce, Pose::Run] {
+            assert!(poses.contains(&pose), "{pose:?} never happened");
+        }
+        assert_eq!(cat.mode(), Mode::Free);
+    }
+
+    #[test]
+    fn the_cat_stays_inside_the_bar() {
+        let start = Instant::now();
+        for seed in 0..5 {
+            let mut cat = free_cat(start, seed);
+            let (_, spots) = watch(&mut cat, start, Duration::from_secs(10 * 60));
+            // A turn moves the drawn spot by a few pixels either side.
+            let right_edge = BAR_WIDTH - CANVAS_WIDTH + 6;
+            assert!(
+                spots.iter().all(|x| *x + 6 >= HOME_X && *x <= right_edge),
+                "seed {seed}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_cat_rests_before_it_acts() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        let (poses, _) = watch(&mut cat, start, Duration::from_secs(*REST_SECONDS.start()));
+        assert!(poses.iter().all(|pose| *pose == Pose::Sit));
+    }
+
+    #[test]
+    fn without_a_bar_width_the_cat_stays_put() {
+        let start = Instant::now();
+        let mut cat = Cat::new(start, Clock::starting_at(time(10, 0, 0, 0), 1, start));
+        let (_, spots) = watch(&mut cat, start, Duration::from_secs(5 * 60));
+        assert!(spots.iter().all(|x| *x == HOME_X));
+    }
+
+    #[test]
+    fn sitting_is_picked_most_often() {
+        let mut cat = free_cat(Instant::now(), 7);
+        let picks: Vec<Action> = (0..1000).map(|_| cat.pick_action()).collect();
+        let count = |action| picks.iter().filter(|pick| **pick == action).count();
+        assert!(count(Action::Sit) > count(Action::Walk));
+        assert!(count(Action::Walk) > count(Action::Run));
+        assert!(count(Action::Run) > 0);
     }
 }

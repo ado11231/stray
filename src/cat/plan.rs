@@ -9,6 +9,15 @@ use std::time::Duration;
 /// How far the cat moves with each walk frame, in sprite pixels.
 const WALK_STRIDE: i32 = 13;
 
+/// How far the cat moves with each run frame, in sprite pixels.
+const RUN_STRIDE: i32 = 39;
+
+/// How far the cat moves with each pounce frame, in sprite pixels.
+const POUNCE_STEP: i32 = 14;
+
+/// Times the cat wiggles its rear before it pounces.
+const WIGGLES: usize = 2;
+
 /// Turning around flips the frames, which moves the body this far on its canvas when it
 /// ends up facing left. The draw spot moves by this much so the cat turns in place.
 const FLIP_SHIFT: i32 = -6;
@@ -96,24 +105,31 @@ impl Plan {
     }
 
     /// From standing, turns if needed and walks to `x`.
-    pub fn walk_to(mut self, x: i32) -> Self {
+    pub fn walk_to(self, x: i32) -> Self {
+        self.travel(Pose::Walk, WALK_STRIDE, x)
+    }
+
+    /// From standing, turns if needed and runs to `x`.
+    pub fn run_to(self, x: i32) -> Self {
+        self.travel(Pose::Run, RUN_STRIDE, x)
+    }
+
+    /// From standing, turns to face `x` and moves there with `pose`, `stride` pixels a frame.
+    fn travel(mut self, pose: Pose, stride: i32, x: i32) -> Self {
         let distance = x - self.x;
         if distance == 0 {
             return self;
         }
-        let facing = if distance > 0 {
-            Facing::Right
-        } else {
-            Facing::Left
-        };
-        self = self.turn_to(facing);
+        self = self.turn_to(facing_toward(distance));
         // Turning moved the spot a little, so measure again from there.
         let distance = x - self.x;
-        let frames = distance.unsigned_abs().div_ceil(WALK_STRIDE.unsigned_abs());
-        let frames_signed = i32::try_from(frames).unwrap_or(i32::MAX).max(1);
-        let move_per_frame = distance / frames_signed;
+        let frames = distance
+            .unsigned_abs()
+            .div_ceil(stride.unsigned_abs())
+            .max(1);
+        let move_per_frame = distance / i32::try_from(frames).unwrap_or(i32::MAX);
         self.steps.push(Step {
-            pose: Pose::Walk,
+            pose,
             facing: self.facing,
             backward: false,
             frames: Some(usize::try_from(frames).unwrap_or(usize::MAX)),
@@ -131,11 +147,7 @@ impl Plan {
         if x == self.x && facing == self.facing {
             return self;
         }
-        let walking = if x >= self.x {
-            Facing::Right
-        } else {
-            Facing::Left
-        };
+        let walking = facing_toward(x - self.x);
         // A turn at the end moves the spot, so stop short by that much.
         let last_turn = if walking == facing {
             0
@@ -178,6 +190,37 @@ impl Plan {
         self.sit()
     }
 
+    /// From sitting, gets up, turns to `facing`, crouches, wiggles, pounces, bats, and sits.
+    pub fn pounce(mut self, facing: Facing) -> Self {
+        self = self.get_up().turn_to(facing);
+        self.play(Pose::Crouch, false);
+        for _ in 0..WIGGLES {
+            self.play(Pose::Wiggle, false);
+        }
+        let frames = Pose::Pounce.frame_count();
+        let move_per_frame = match facing {
+            Facing::Right => POUNCE_STEP,
+            Facing::Left => -POUNCE_STEP,
+        };
+        self.steps.push(Step {
+            pose: Pose::Pounce,
+            facing,
+            backward: false,
+            frames: Some(frames),
+            x: self.x + move_per_frame,
+            move_per_frame,
+        });
+        self.x += move_per_frame * i32::try_from(frames).unwrap_or(0);
+        self.play(Pose::Bat, false);
+        self.play(Pose::Crouch, true);
+        self.sit_down().sit()
+    }
+
+    /// How far a pounce moves the cat, so the caller can check there is room.
+    pub fn pounce_length() -> i32 {
+        POUNCE_STEP * i32::try_from(Pose::Pounce.frame_count()).unwrap_or(0)
+    }
+
     /// From sitting, lies down and falls asleep: getting up from a nap, played backward.
     pub fn sleep(mut self) -> Self {
         self.play(Pose::Stand, true);
@@ -197,6 +240,15 @@ impl Plan {
     pub fn asleep(mut self) -> Self {
         self.hold(Pose::Sleep);
         self
+    }
+}
+
+/// The way to face to move `distance`, which is negative to the left.
+pub fn facing_toward(distance: i32) -> Facing {
+    if distance >= 0 {
+        Facing::Right
+    } else {
+        Facing::Left
     }
 }
 
@@ -282,6 +334,30 @@ mod tests {
         let plan = Plan::from(100, Facing::Right).walk_to(1000);
         assert_eq!(plan.x, 1000);
         Ok(())
+    }
+
+    #[test]
+    fn running_takes_fewer_frames_than_walking() {
+        let frames = |plan: Plan| {
+            plan.steps()
+                .iter()
+                .filter_map(|step| step.frames)
+                .sum::<usize>()
+        };
+        let walk = frames(Plan::from(0, Facing::Right).walk_to(1000));
+        let run = frames(Plan::from(0, Facing::Right).run_to(1000));
+        assert!(run * 2 < walk);
+    }
+
+    #[test]
+    fn a_pounce_lands_ahead_and_ends_sitting() {
+        let plan = Plan::from(500, Facing::Left).pounce(Facing::Left);
+        assert_eq!(plan.x, 500 - Plan::pounce_length());
+        let steps = plan.steps();
+        let poses: Vec<Pose> = steps.iter().map(|step| step.pose).collect();
+        assert_eq!(poses.first(), Some(&Pose::SitDown));
+        assert!(poses.contains(&Pose::Pounce) && poses.contains(&Pose::Bat));
+        assert_eq!(poses.last(), Some(&Pose::Sit));
     }
 
     #[test]
