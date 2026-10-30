@@ -22,11 +22,11 @@ CROUCH = dict(head=(204, 86), haunch=(110, 176, 56, 38, -12), chest=(150, 128, 2
               hind_paw=(112, GROUND - FOOT[1]))
 # pushing off: the back legs straighten, the front comes up and reaches
 LAUNCH = dict(head=(212, 58), haunch=(100, 160, 62, 36, 10), chest=(150, 98, 262, 170),
-              leg_top=(240, 148), tail_root=(58, 122), tail_len=50, tail_start=165, tail_bend=-10,
+              leg_top=(240, 148), tail_root=(58, 122), tail_len=50, tail_start=145, tail_bend=10,
               head_turn=0, paw=(26, 168), far_paw=(18, 174), hind_paw=(66, GROUND - FOOT[1]))
 # in the air, stretched out long
 AIR = dict(head=(214, 34), haunch=(96, 134, 64, 34, 0), chest=(140, 70, 262, 138),
-           leg_top=(244, 118), tail_root=(52, 100), tail_len=50, tail_start=172, tail_bend=-10,
+           leg_top=(244, 118), tail_root=(52, 100), tail_len=50, tail_start=140, tail_bend=10,
            head_turn=0, paw=(30, 150), far_paw=(22, 156), hind_paw=(40, 150))
 # front paws down on the ball spot, the back end still coming down
 LAND = dict(head=(208, 88), haunch=(108, 172, 58, 38, -14), chest=(152, 124, 256, 204),
