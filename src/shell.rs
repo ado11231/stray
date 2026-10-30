@@ -258,9 +258,16 @@ mod tests {
         let mut reader = pty.master.try_clone_reader()?;
         let mut writer = pty.master.take_writer()?;
         let mut command = CommandBuilder::new(shell_path(shell));
-        if matches!(shell, Shell::Bash) {
-            command.args(["--noprofile", "--rcfile"]);
-            command.arg(&settings);
+        // Skip the system's own startup files, so only the test's settings file runs. Some
+        // systems set zsh up in ways that swallow the first key.
+        match shell {
+            Shell::Bash => {
+                command.args(["--noprofile", "--rcfile"]);
+                command.arg(&settings);
+            }
+            Shell::Zsh => {
+                command.arg("-d");
+            }
         }
         command.arg("-i");
         command.env("ZDOTDIR", &folder);
