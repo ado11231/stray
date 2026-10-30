@@ -1,7 +1,7 @@
 # Stray
 
 * A small cat that lives in your terminal.
-* Right now Stray wraps your shell and saves two rows at the bottom for the cat. The cat itself is not drawn yet.
+* Right now Stray wraps your shell and draws a sitting cat, its bowl, and a cat tree in two rows at the bottom. The cat does not move yet.
 * Works with bash and zsh, in kitty and the VS Code terminal.
 
 ## Run It

@@ -85,31 +85,23 @@ flowchart LR
 ### Phase 2: The Bar
 
 * The hardest phase.
-* The image check and basic row reservation are implemented. Supported terminals
-  give the shell two fewer rows at startup and on resize. Windows shorter than
-  10 rows use the full area. Exit and shutdown restore the full scroll region.
-* Region updates wait for complete escape sequences and synchronized updates.
-  Cursor tracking preserves the program's saved cursor slot.
-* Automated tests cover these changes. Real-terminal checks are still pending:
-  see [Phase 2 testing](PHASE2-TESTING.md). Full screen programs, region resets,
-  cursor confinement, image drawing, and tmux placeholders remain unfinished.
+* Done in code October 29, 2026, apart from tmux. Real-terminal checks are still
+  pending: see [Phase 2 testing](PHASE2-TESTING.md).
+* tmux moved to a later phase. Inside tmux, Stray keeps the bar rows but draws nothing.
 
-1. Run the image check. If it fails, run the shell directly and print the hint once.
-2. Reserve the bottom two rows.
-3. Color the frames to match the terminal's text.
-4. Place a cat that sits still in the home spot.
-5. Keep the bar and the cat whole through clears, full screen programs, resets, and resizes.
-6. Stop programs from moving the cursor into the bar.
-7. Draw only between pieces of output, and wait for batched updates to end.
-8. Turn the bar off in windows shorter than 10 rows.
-9. Inside tmux, pass image codes through and show the cat with placeholders.
+1. Run the image check. If it fails, run the shell directly and print the hint once. Done.
+2. Reserve the bottom two rows. Done.
+3. Color the frames to match the terminal's text. Done: the check asks for the text and background colors.
+4. Place a cat that sits still in the home spot. Done, with the bowl and the cat tree.
+5. Keep the bar and the cat whole through clears, full screen programs, resets, and resizes. Done.
+6. Stop programs from moving the cursor into the bar. Done.
+7. Draw only between pieces of output, and wait for batched updates to end. Done.
+8. Turn the bar off in windows shorter than 10 rows. Done.
 
 * **Done when:**
   * The bar is correct after `clear`, `vim`, a long build, a Claude Code session, and ten resizes.
   * Scrolling back works as it does without Stray.
   * A program that shows its own images, such as `kitten icat`, and the cat do not disturb each other.
-  * tmux started from a Stray window shows one cat, in the window's bar.
-  * tmux started on its own shows a whole bar in every pane, and the cats stay put when you switch panes and windows.
   * An ssh session shows one cat, in your own bar.
 
 ## Planned
@@ -150,6 +142,11 @@ flowchart LR
 * **Done when** a newcomer goes from install to a cat in their terminal in under two minutes.
 
 ## Later Ideas
+
+* tmux, moved out of Phase 2 on October 29, 2026: pass image codes through and show
+  the cat with placeholders, so it follows its pane. Done when tmux started from a
+  Stray window shows one cat, in the window's bar, and tmux started on its own shows
+  a whole bar in every pane that stays put when you switch panes and windows.
 
 1. The mouse scaring the cat.
 2. A different schedule on weekends.

@@ -272,6 +272,7 @@ stateDiagram-v2
 ### Inside tmux
 
 * tmux does not know about images. A placed image would stay where it is when you switch panes or windows.
+* This is planned for a later phase. For now, inside tmux Stray keeps the bar rows but draws nothing.
 
 1. Stray wraps each image code so tmux passes it through to the terminal app.
 2. It uploads the frames the same way as outside tmux.
