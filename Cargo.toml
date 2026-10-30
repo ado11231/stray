@@ -15,6 +15,7 @@ base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
 crossterm = "0.29.0"
 directories = "6.0.0"
+fastrand = "2.5.0"
 jiff = "0.2.38"
 libc = "0.2"
 png = "0.18.1"
