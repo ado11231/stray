@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
+from scipy.spatial import ConvexHull
 from PIL import Image, ImageDraw
 
 TOOLS = Path(__file__).resolve().parent
@@ -78,6 +79,7 @@ SIT_DOWN_PACE = dict(haunch=0.6, tail_root=0.6, head=1.6, chest=1.6, leg_top=1.6
 HIND_W = (32, 24, 19)            # back leg width at the hip, the hock, and the foot, like the walk
 UPPER, LOWER = 35, 33            # the two parts of the back leg
 HIND_PAW_X = 104                 # the back paw stays here while the cat sits down or gets up
+NECK_IN = 0.9                    # the neck meets the head a little inside its edge
 SMOOTH = 7                       # px; dips in the outline narrower than this get filled
 EARS = 40                        # px from the top of HEAD_BOX to the bottom of the ears
 BACK_IN = 0.12                   # how far in from each oval's top and bottom the back line runs
@@ -237,6 +239,31 @@ def draw_back(draw, pose):
     draw.polygon([big(c) for c in corners], fill=WHITE)
 
 
+def oval_points(middle, rx, ry, turn=0):
+    """Points around an oval with these half widths, tipped by turn degrees like the head."""
+    a = math.radians(turn)
+    points = []
+    for k in range(48):
+        t = 2 * math.pi * k / 48
+        u, v = rx * math.cos(t), ry * math.sin(t)
+        points.append((middle[0] + u * math.cos(a) + v * math.sin(a), middle[1] - u * math.sin(a) + v * math.cos(a)))
+    return points
+
+
+def draw_neck(draw, pose):
+    """Fill the outline around the head and the chest, so the neck runs into the
+    body in one line instead of the head sitting on top like a ball."""
+    hx, hy = pose["head"]
+    middle = (hx + HEAD_KEEP[0] - HEAD_BOX[0], hy + HEAD_KEEP[1] - HEAD_BOX[1])
+    head = oval_points(middle, HEAD_KEEP[2] * NECK_IN, HEAD_KEEP[3] * NECK_IN, pose["head_turn"])
+    # only the back of the head, below the ears, so the ears stay apart and the chin stays in front
+    head = [(x, y) for x, y in head if x <= middle[0] and y >= hy + EARS]
+    x0, y0, x1, y1 = pose["chest"]
+    chest = oval_points(((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2)
+    points = head + chest
+    draw.polygon([big(points[i]) for i in ConvexHull(points).vertices], fill=WHITE)
+
+
 def solid(layer):
     """The same picture with no soft edge, so laid over white it leaves no dark line.
     The edge still comes out soft once the frame is shrunk."""
@@ -303,6 +330,7 @@ def draw_frame(head, pose, sway=0):
     draw_haunch(body_draw, pose["haunch"])
     body_draw.ellipse([v * SCALE for v in pose["chest"]], fill=WHITE)
     draw_back(body_draw, pose)
+    draw_neck(body_draw, pose)
     head, head_at = turn_head(head, pose)
     body.alpha_composite(head, head_at)
     im.alpha_composite(smooth(body, pose["head"][1] + EARS))
