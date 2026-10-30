@@ -210,33 +210,33 @@ mod tests {
         Ok(())
     }
 
-    /// The prompt the test shells show, so the test knows when to type.
-    const TEST_PROMPT: &str = "READY> ";
-
-    /// How long a test shell may take to show its prompt or to exit.
+    /// How long a test shell may take to start, to answer a line, or to exit.
     const SHELL_WAIT: Duration = Duration::from_secs(10);
 
-    /// Reads shell output into `bytes` until it holds `count` prompts.
-    fn wait_for_prompts(
+    /// A shell that prints nothing for this long is waiting for the next line.
+    const SHELL_QUIET: Duration = Duration::from_millis(300);
+
+    /// Reads shell output into `bytes` until the shell has printed something new and then
+    /// gone quiet, so it is waiting at its prompt.
+    fn wait_until_quiet(
         receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
         bytes: &mut Vec<u8>,
-        count: usize,
     ) -> Result<()> {
-        let prompt = TEST_PROMPT.as_bytes();
+        let before = bytes.len();
         let deadline = std::time::Instant::now() + SHELL_WAIT;
-        while bytes
-            .windows(prompt.len())
-            .filter(|part| *part == prompt)
-            .count()
-            < count
-        {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
-            let chunk = receiver
-                .recv_timeout(left)
-                .context("the shell did not show its prompt")?;
-            bytes.extend(chunk);
+        loop {
+            match receiver.recv_timeout(SHELL_QUIET) {
+                Ok(chunk) => bytes.extend(chunk),
+                Err(_) if bytes.len() > before => return Ok(()),
+                Err(_) => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "the shell did not answer; it printed: {:?}",
+                    String::from_utf8_lossy(bytes)
+                );
+            }
         }
-        Ok(())
     }
 
     /// Starts `shell` as Stray's own inner shell with the startup script in its settings
@@ -252,9 +252,7 @@ mod tests {
             Shell::Bash => "bashrc",
             Shell::Zsh => ".zshrc",
         });
-        // A prompt the test can spot, so it types only once the shell is ready.
-        let script = init_script(shell, FAKE_EXECUTABLE);
-        std::fs::write(&settings, format!("{script}\nPS1='{TEST_PROMPT}'\n"))?;
+        std::fs::write(&settings, init_script(shell, FAKE_EXECUTABLE))?;
 
         let pty = native_pty_system().openpty(PtySize::default())?;
         let mut reader = pty.master.try_clone_reader()?;
@@ -288,11 +286,12 @@ mod tests {
                 }
             }
         });
-        // Each line waits for its prompt, as a person typing would. Some systems take a
-        // while to start zsh, and keys typed too early can be lost.
+        // Each line waits until the shell is quiet at its prompt, as a person typing would.
+        // Some systems take a while to start zsh, and keys typed too early can be lost.
         let mut bytes = Vec::new();
-        for (typed, line) in lines.iter().chain(&["exit"]).enumerate() {
-            wait_for_prompts(&receiver, &mut bytes, typed + 1)?;
+        for line in lines.iter().chain(&["exit"]) {
+            wait_until_quiet(&receiver, &mut bytes)
+                .with_context(|| format!("{} before {line:?}", shell_path(shell)))?;
             writer.write_all(format!("{line}\r").as_bytes())?;
         }
         // Collect the rest until the shell exits and the reader stops.
