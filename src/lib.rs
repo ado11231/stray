@@ -4,6 +4,7 @@ pub mod bar;
 pub mod cat;
 pub mod env;
 pub mod escape;
+pub mod foreground;
 pub mod frames;
 pub mod image;
 pub mod output_boundary;

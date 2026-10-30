@@ -12,6 +12,7 @@ use std::process::ExitCode;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::time::Instant;
 use stray_cat::bar;
+use stray_cat::foreground::Foreground;
 
 /// How many events can wait in the queue before workers pause.
 const EVENT_QUEUE_SIZE: usize = 16;
@@ -74,7 +75,7 @@ impl ShellSession {
             .context("could not open PTY writer")?;
 
         let raw_mode = terminal::RawModeGuard::enable()?;
-        let output = bar::Output::new(std::io::stdout(), size, setup)
+        let mut output = bar::Output::new(std::io::stdout(), size, setup)
             .context("could not reserve bar rows")?;
 
         let shell = ShellGuard {
@@ -82,6 +83,13 @@ impl ShellSession {
         };
         // Only the shell should hold its side of the PTY, so output ends when the shell exits.
         drop(pty.slave);
+        let shell_id = shell
+            .child
+            .process_id()
+            .and_then(|id| i32::try_from(id).ok());
+        if let (Some(terminal), Some(shell_id)) = (pty.master.as_raw_fd(), shell_id) {
+            output.watch_foreground(Foreground::new(terminal, shell_id));
+        }
 
         Ok(Self {
             shell,

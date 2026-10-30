@@ -7,6 +7,7 @@
 mod plan;
 mod step;
 
+use crate::foreground::Front;
 use crate::frames::{CANVAS_WIDTH, Facing, Pose, Sprite};
 use crate::schedule::{Clock, DayPart};
 use plan::{Plan, facing_toward};
@@ -32,6 +33,9 @@ const FLINCH_HOLD: Duration = Duration::from_millis(300);
 
 /// The exit status of a command stopped with Ctrl C. The cat does not flinch at it.
 const CTRL_C_STATUS: i32 = 130;
+
+/// After a program has run this long, the cat naps until you are back at the prompt.
+const LONG_RUN: Duration = Duration::from_secs(2 * 60);
 
 /// How long the cat sits still in free time before it picks a resting action, in seconds.
 /// Short enough that it does each action within about ten minutes.
@@ -63,6 +67,8 @@ const ACTIONS: [(Action, u32); 4] = [
 pub enum Mode {
     /// Rests, and now and then does a resting action.
     Free,
+    /// A program is running, so the cat sits and watches, and naps after a long run.
+    Watching,
     Eating,
     Sleeping,
 }
@@ -85,6 +91,10 @@ pub struct Cat {
     last_key: Option<Instant>,
     /// A full screen program such as `vim` is open, so the cat sits still.
     full_screen: bool,
+    /// What is in front in the shell's terminal.
+    front: Front,
+    /// When the program in front started, if one is running.
+    program_started: Option<Instant>,
     rng: fastrand::Rng,
 }
 
@@ -107,6 +117,8 @@ impl Cat {
             rest_until: None,
             last_key: None,
             full_screen: false,
+            front: Front::Shell,
+            program_started: None,
             rng: fastrand::Rng::new(),
         };
         cat.follow(plan, now);
@@ -141,13 +153,24 @@ impl Cat {
         }
     }
 
+    /// Notes what is in front in the shell's terminal: the shell, or a program it ran.
+    pub fn set_front(&mut self, front: Front, now: Instant) {
+        if front == self.front {
+            return;
+        }
+        self.front = front;
+        self.program_started = (front != Front::Shell).then_some(now);
+    }
+
     /// A command finished with `status` and the prompt is back. A sitting cat flinches when
     /// the command failed, unless it was stopped with Ctrl C.
     pub fn command_finished(&mut self, status: i32, now: Instant) {
         let failed = status != 0 && status != CTRL_C_STATUS;
-        // Typing the command made the cat look up, so it may still be looking.
-        let sitting = self.settled() || self.looking_up();
-        if !failed || self.mode != Mode::Free || !sitting {
+        // Typing the command made the cat look up, so it may still be looking. A cat that
+        // napped through a long run sleeps on.
+        let sitting = (self.settled() && self.step().pose == Pose::Sit) || self.looking_up();
+        let awake_mode = matches!(self.mode, Mode::Free | Mode::Watching);
+        if !failed || !awake_mode || !sitting {
             return;
         }
         let step = *self.step();
@@ -233,10 +256,15 @@ impl Cat {
             Mode::Sleeping
         } else if part.is_meal() && self.fed != Some(part) {
             Mode::Eating
+        } else if self.front != Front::Shell {
+            Mode::Watching
         } else {
             Mode::Free
         };
         if wanted == self.mode {
+            if wanted == Mode::Watching {
+                self.nap_after_a_long_run(now);
+            }
             return;
         }
 
@@ -246,7 +274,7 @@ impl Cat {
             plan = plan.wake();
         }
         plan = match wanted {
-            Mode::Free => plan.sit(),
+            Mode::Free | Mode::Watching => plan.sit(),
             Mode::Eating => {
                 self.fed = Some(part);
                 plan.go_to(EAT_SPOT, Facing::Left).eat(MEAL_LENGTH)
@@ -256,6 +284,17 @@ impl Cat {
         self.mode = wanted;
         self.rest_until = None;
         self.follow(plan, now);
+    }
+
+    /// While a program other than a coding agent has run a long time, naps where it sits.
+    fn nap_after_a_long_run(&mut self, now: Instant) {
+        let long_run = self
+            .program_started
+            .is_some_and(|started| now.saturating_duration_since(started) >= LONG_RUN);
+        let step = *self.step();
+        if self.front == Front::Program && long_run && step.pose == Pose::Sit {
+            self.follow(Plan::from(step.x, step.facing).sleep(), now);
+        }
     }
 
     /// In free time, rests a while, then picks a resting action.
@@ -660,5 +699,59 @@ mod tests {
         cat.command_finished(1, start);
         let (poses, _) = watch(&mut cat, start, Duration::from_secs(2));
         assert!(poses.iter().all(|pose| *pose == Pose::Sleep));
+    }
+
+    #[test]
+    fn while_a_program_runs_the_cat_watches_and_stays_put() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.set_front(Front::Agent, start);
+        let (poses, spots) = watch(&mut cat, start, Duration::from_secs(10 * 60));
+        assert_eq!(cat.mode(), Mode::Watching);
+        assert!(poses.iter().all(|pose| *pose == Pose::Sit));
+        assert!(spots.iter().all(|x| *x == HOME_X));
+    }
+
+    #[test]
+    fn after_a_long_run_the_cat_naps_until_the_prompt_is_back() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.set_front(Front::Program, start);
+        let now = start + LONG_RUN;
+        let (poses, _) = watch(&mut cat, start, LONG_RUN - Duration::from_secs(1));
+        assert!(poses.iter().all(|pose| *pose == Pose::Sit));
+        let (poses, _) = watch(&mut cat, now, Duration::from_secs(5));
+        assert_eq!(poses.last(), Some(&Pose::Sleep));
+
+        // Typing and a failed command do not wake it. The prompt coming back does.
+        let now = now + Duration::from_secs(5);
+        cat.key_pressed(now);
+        cat.command_finished(1, now);
+        assert_eq!(cat.sprite(now).pose, Pose::Sleep);
+        cat.set_front(Front::Shell, now);
+        let (poses, _) = watch(&mut cat, now, Duration::from_secs(5));
+        assert_eq!(cat.mode(), Mode::Free);
+        assert_eq!(poses.last(), Some(&Pose::Sit));
+    }
+
+    #[test]
+    fn a_coding_agent_does_not_put_the_cat_to_sleep() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.set_front(Front::Agent, start);
+        let (poses, _) = watch(&mut cat, start, LONG_RUN * 2);
+        assert!(!poses.contains(&Pose::Sleep));
+    }
+
+    #[test]
+    fn a_command_that_fails_while_watching_still_makes_it_flinch() {
+        let start = Instant::now();
+        let mut cat = free_cat(start, 1);
+        cat.set_front(Front::Program, start);
+        let (_, _) = watch(&mut cat, start, Duration::from_secs(1));
+        let now = start + Duration::from_secs(1);
+        assert_eq!(cat.mode(), Mode::Watching);
+        cat.command_finished(1, now);
+        assert_eq!(cat.sprite(now).pose, Pose::Flinch);
     }
 }

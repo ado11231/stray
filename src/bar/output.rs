@@ -4,6 +4,7 @@ use super::scene::{CellSize, Scene};
 use super::{Setup, shell_size};
 use crate::cat::Cat;
 use crate::escape;
+use crate::foreground::Foreground;
 use crate::frames::Frames;
 use crate::output_boundary::OutputBoundary;
 use crate::schedule::Clock;
@@ -41,6 +42,8 @@ pub struct Output<W: Write> {
     cat: Cat,
     /// Raised by the keyboard thread when a key is pressed, and lowered here.
     typed: Arc<AtomicBool>,
+    /// Tells which program is in front, once the shell has started.
+    foreground: Option<Foreground>,
 }
 
 impl<W: Write> Output<W> {
@@ -64,6 +67,7 @@ impl<W: Write> Output<W> {
             scene: (images_supported && !inside_tmux).then(|| Scene::new(Frames::new(palette))),
             cell: cell_size(size),
             typed: Arc::new(AtomicBool::new(false)),
+            foreground: None,
             cat: Cat::new(
                 Instant::now(),
                 Clock::from_env(Instant::now()).map_err(io::Error::other)?,
@@ -146,6 +150,11 @@ impl<W: Write> Output<W> {
         Arc::clone(&self.typed)
     }
 
+    /// Starts telling the cat which program is in front, once the shell is running.
+    pub fn watch_foreground(&mut self, foreground: Foreground) {
+        self.foreground = Some(foreground);
+    }
+
     /// Moves the cat on to its frame for `now`, and says when it should be called again.
     /// Returns `None` when there is no cat to move.
     pub fn animate(&mut self, now: Instant) -> io::Result<Option<Instant>> {
@@ -154,6 +163,9 @@ impl<W: Write> Output<W> {
         }
         if let Some(parser) = &self.screen {
             self.cat.set_full_screen(parser.screen().alternate_screen());
+        }
+        if let Some(foreground) = &mut self.foreground {
+            self.cat.set_front(foreground.front(), now);
         }
         let (Some(parser), Some(scene)) = (&self.screen, &mut self.scene) else {
             return Ok(None);
