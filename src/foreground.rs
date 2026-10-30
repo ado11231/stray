@@ -10,6 +10,7 @@ const CODING_AGENTS: [&str; 2] = ["claude", "codex"];
 const EXE_ENDING: &str = ".exe";
 
 /// The longest process name the system keeps, plus room for the end of the string.
+#[cfg(target_os = "macos")]
 const NAME_BUFFER_SIZE: usize = 256;
 
 /// What is in front in the shell's terminal.
@@ -252,25 +253,31 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn the_first_argument_is_found() -> Result<()> {
+    /// Starts `/bin/sleep` and returns what `look_up` finds for it once it has started. A
+    /// new process takes a moment to become `sleep`, so this asks until it does.
+    fn found_for_sleep(look_up: fn(i32) -> Option<String>, expected: &str) -> Result<String> {
         let mut child = Command::new("/bin/sleep").arg("5").spawn()?;
         let pid = i32::try_from(child.id())?;
-        let first = first_argument(pid).context("the first argument should be found");
+        let deadline = Instant::now() + WAIT;
+        let mut found = look_up(pid);
+        while found.as_deref() != Some(expected) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            found = look_up(pid);
+        }
         child.kill()?;
         child.wait()?;
-        assert_eq!(first?, "/bin/sleep");
+        found.context("it should be found")
+    }
+
+    #[test]
+    fn the_first_argument_is_found() -> Result<()> {
+        assert_eq!(found_for_sleep(first_argument, "/bin/sleep")?, "/bin/sleep");
         Ok(())
     }
 
     #[test]
     fn a_process_name_is_found() -> Result<()> {
-        let mut child = Command::new("/bin/sleep").arg("5").spawn()?;
-        let pid = i32::try_from(child.id())?;
-        let name = process_name(pid).context("the name should be found");
-        child.kill()?;
-        child.wait()?;
-        assert_eq!(name?, "sleep");
+        assert_eq!(found_for_sleep(process_name, "sleep")?, "sleep");
         Ok(())
     }
 
