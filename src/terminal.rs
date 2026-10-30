@@ -23,16 +23,16 @@ pub fn tty_name() -> Option<OsString> {
     Some(std::ffi::OsStr::from_bytes(name.to_bytes()).to_owned())
 }
 
-/// Reads the terminal's size in rows and columns.
+/// Reads the terminal's size in rows and columns, and in pixels when the terminal says.
 pub fn read_size() -> Result<PtySize> {
-    let (columns, rows) = crossterm::terminal::size().context("could not read terminal size")?;
+    let window = crossterm::terminal::window_size().context("could not read terminal size")?;
 
     Ok(PtySize {
-        rows,
-        cols: columns,
+        rows: window.rows,
+        cols: window.columns,
         // Zero means the pixel size is unknown.
-        pixel_width: 0,
-        pixel_height: 0,
+        pixel_width: window.width,
+        pixel_height: window.height,
     })
 }
 

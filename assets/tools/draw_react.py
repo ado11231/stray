@@ -15,7 +15,8 @@ import math
 from PIL import Image, ImageDraw
 
 import draw_sit as cat
-from draw_sit import CANVAS, SCALE, SIT, WHITE, big, blend, draw_frame, save
+from draw_sit import SIT, blend, draw_frame
+from shapes import CANVAS, SCALE, WHITE, big, save
 
 # the head tips up toward the prompt above
 LOOK = dict(SIT, head=(168, 4), head_turn=22)

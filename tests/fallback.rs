@@ -1,3 +1,5 @@
+//! Tests that Stray runs the shell directly when it cannot wrap it.
+
 #![cfg(unix)]
 
 use std::io::{self, Write};

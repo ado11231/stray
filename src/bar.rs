@@ -1,15 +1,29 @@
 //! The bar: two rows at the bottom of the terminal where the cat will live.
 
+use crate::frames::Palette;
 use portable_pty::PtySize;
 
 mod output;
+mod scene;
 pub use output::Output;
 
 /// Rows kept free at the bottom of the terminal for the cat.
 const BAR_ROWS: u16 = 2;
 
 /// Shorter terminals keep every row for the shell and show no bar.
-const MIN_TERMINAL_ROWS: u16 = 10;
+pub const MIN_TERMINAL_ROWS: u16 = 10;
+
+/// What the image check found out about the terminal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Setup {
+    pub images_supported: bool,
+    /// Inside tmux nothing is drawn yet, because a picture would not follow its pane.
+    pub inside_tmux: bool,
+    /// The 0-based cursor row and column, if the terminal sent them.
+    pub cursor: Option<(u16, u16)>,
+    /// The text and background colors, if the terminal sent both.
+    pub palette: Option<Palette>,
+}
 
 /// Calculates the shell area, leaving room for the bar when it can be shown.
 pub fn shell_size(terminal_size: PtySize, images_supported: bool) -> PtySize {

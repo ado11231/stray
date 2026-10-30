@@ -1,11 +1,17 @@
+//! Tests that a real Stray process gives the shell the right size as the window changes.
+
 #![cfg(unix)]
 
 use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
+use std::borrow::Cow;
 use std::io::{ErrorKind, Read, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
-use stray_cat::escape::{DEVICE_ATTRIBUTES_QUERY, RESET_SCROLL_REGION, RESTORE_TERMINAL};
+use stray_cat::bar::MIN_TERMINAL_ROWS;
+use stray_cat::escape::{
+    DEVICE_ATTRIBUTES_QUERY, RESET_SCROLL_REGION, RESTORE_TERMINAL, scroll_region,
+};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -124,11 +130,11 @@ fn check_session(terminate: bool) -> Result {
     ] {
         pty.master.resize(size(rows, cols))?;
 
-        // Terminals shorter than 10 rows have no bar, so the whole screen scrolls.
-        let region = if rows < 10 {
-            RESET_SCROLL_REGION.to_vec()
+        // Short terminals have no bar, so the whole screen scrolls.
+        let region = if rows < MIN_TERMINAL_ROWS {
+            Cow::Borrowed(RESET_SCROLL_REGION)
         } else {
-            format!("\x1b[1;{shell_rows}r").into_bytes()
+            Cow::Owned(scroll_region(shell_rows).into_bytes())
         };
         wait_for_output(&output, &region)?;
 

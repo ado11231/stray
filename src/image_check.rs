@@ -5,9 +5,11 @@
 
 use std::io::{self, Write};
 use stray_cat::escape::{
-    CSI, CSI_PRIVATE, CURSOR_POSITION_QUERY, DEVICE_ATTRIBUTES_QUERY, ESC, GRAPHICS_START,
-    STRING_END, TMUX_PASSTHROUGH_START,
+    BACKGROUND_COLOR_QUERY, BELL, CSI, CSI_PRIVATE, CURSOR_POSITION_QUERY, DEVICE_ATTRIBUTES_QUERY,
+    GRAPHICS_START, OSC, STRING_END, TEXT_COLOR_QUERY,
 };
+use stray_cat::frames::Palette;
+use stray_cat::image::tmux_passthrough;
 
 pub mod hint;
 pub mod probe;
@@ -27,40 +29,46 @@ const CURSOR_REPLY_END: u8 = b'R';
 /// The last byte of a device attributes reply.
 const ATTRIBUTES_REPLY_END: u8 = b'c';
 
+/// The OSC numbers of the text and background colors.
+const TEXT_COLOR: &[u8] = b"10";
+const BACKGROUND_COLOR: &[u8] = b"11";
+
+/// Color replies start their value with this, then give red, green, and blue in hex.
+const RGB_PREFIX: &[u8] = b"rgb:";
+
+/// A color channel in a reply has at most this many hex digits.
+const MAX_HEX_DIGITS: usize = 4;
+
+/// Color channels are written in hex.
+const HEX: u32 = 16;
+
+/// Each hex digit holds 4 bits.
+const BITS_PER_HEX_DIGIT: usize = 4;
+
 /// Asks to check, but not show, a one pixel image (`a=q` means query only).
 fn graphics_query() -> String {
     format!("\x1b_Gi={IMAGE_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\")
 }
 
-/// Sends the image, cursor, and device attribute questions.
+/// Sends the image, cursor, color, and device attribute questions.
 pub fn write_query(output: &mut impl Write, inside_tmux: bool) -> io::Result<()> {
     let graphics = graphics_query();
     if inside_tmux {
-        // Ask tmux for the pane cursor, rather than the outer terminal cursor.
+        // Ask tmux for the pane cursor and colors, rather than the outer terminal's.
         output.write_all(CURSOR_POSITION_QUERY)?;
+        output.write_all(TEXT_COLOR_QUERY)?;
+        output.write_all(BACKGROUND_COLOR_QUERY)?;
         // tmux passes the rest on to the outer terminal.
-        output.write_all(TMUX_PASSTHROUGH_START)?;
-        output.write_all(&double_escapes(graphics.as_bytes()))?;
-        output.write_all(&double_escapes(DEVICE_ATTRIBUTES_QUERY))?;
-        output.write_all(STRING_END)?;
+        let questions = [graphics.as_bytes(), DEVICE_ATTRIBUTES_QUERY].concat();
+        output.write_all(&tmux_passthrough(&questions))?;
     } else {
         output.write_all(graphics.as_bytes())?;
         output.write_all(CURSOR_POSITION_QUERY)?;
+        output.write_all(TEXT_COLOR_QUERY)?;
+        output.write_all(BACKGROUND_COLOR_QUERY)?;
         output.write_all(DEVICE_ATTRIBUTES_QUERY)?;
     }
     output.flush()
-}
-
-/// tmux needs every ESC inside a passthrough message written twice.
-fn double_escapes(bytes: &[u8]) -> Vec<u8> {
-    let mut doubled = Vec::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        if byte == ESC {
-            doubled.push(ESC);
-        }
-        doubled.push(byte);
-    }
-    doubled
 }
 
 /// What the parser decided about the bytes waiting in `pending`.
@@ -86,6 +94,10 @@ pub struct Replies {
     pub finished: bool,
     /// The 0-based cursor row and column, if the terminal sent them.
     pub cursor: Option<(u16, u16)>,
+    /// The text color, if the terminal sent it.
+    text: Option<[u8; 3]>,
+    /// The background color, if the terminal sent it.
+    background: Option<[u8; 3]>,
 }
 
 impl Replies {
@@ -96,6 +108,14 @@ impl Replies {
         }
     }
 
+    /// The terminal's colors, when it sent both.
+    pub fn palette(&self) -> Option<Palette> {
+        Some(Palette {
+            text: self.text?,
+            background: self.background?,
+        })
+    }
+
     /// Moves everything still pending to the shell input.
     pub fn finish(mut self) -> Self {
         self.input.append(&mut self.pending);
@@ -104,18 +124,22 @@ impl Replies {
 
     fn parse(&mut self) {
         while !self.pending.is_empty() {
-            let step =
-                if GRAPHICS_START.starts_with(&self.pending) || CSI.starts_with(&self.pending) {
-                    Step::Wait
-                } else if self.pending.starts_with(GRAPHICS_START) {
-                    self.graphics_reply()
-                } else if self.pending.starts_with(CSI_PRIVATE) {
-                    self.attributes_reply()
-                } else if self.pending.starts_with(CSI) {
-                    self.cursor_reply()
-                } else {
-                    Step::Key
-                };
+            let step = if GRAPHICS_START.starts_with(&self.pending)
+                || CSI.starts_with(&self.pending)
+                || OSC.starts_with(&self.pending)
+            {
+                Step::Wait
+            } else if self.pending.starts_with(GRAPHICS_START) {
+                self.graphics_reply()
+            } else if self.pending.starts_with(OSC) {
+                self.color_reply()
+            } else if self.pending.starts_with(CSI_PRIVATE) {
+                self.attributes_reply()
+            } else if self.pending.starts_with(CSI) {
+                self.cursor_reply()
+            } else {
+                Step::Key
+            };
             match step {
                 Step::Wait | Step::Done => return,
                 Step::Key => self.input.push(self.pending.remove(0)),
@@ -145,6 +169,46 @@ impl Replies {
             // A reply for another program's image belongs to the shell.
             None => self.input.append(&mut self.pending),
         }
+        Step::Done
+    }
+
+    /// Reads `ESC ] 10 ; rgb:<red>/<green>/<blue>`, or 11 for the background, ended by
+    /// `ESC \\` or BEL.
+    fn color_reply(&mut self) -> Step {
+        let body = if let Some(body) = self.pending.strip_suffix(STRING_END) {
+            body
+        } else if let Some(body) = self.pending.strip_suffix(&[BELL]) {
+            body
+        } else {
+            return if self.pending.len() < RESPONSE_LIMIT {
+                Step::Wait
+            } else {
+                Step::Key
+            };
+        };
+        let reply = body[OSC.len()..]
+            .split(|&byte| byte == b';')
+            .collect::<Vec<_>>();
+        let color = match reply.as_slice() {
+            [number @ (TEXT_COLOR | BACKGROUND_COLOR), value] => {
+                parse_color(value).map(|color| (*number, color))
+            }
+            _ => None,
+        };
+        let Some((number, color)) = color else {
+            // Any other OSC sequence belongs to the shell.
+            self.input.append(&mut self.pending);
+            return Step::Done;
+        };
+        // A reply after the attributes reply is too late to count.
+        if !self.finished {
+            if number == TEXT_COLOR {
+                self.text = Some(color);
+            } else {
+                self.background = Some(color);
+            }
+        }
+        self.pending.clear();
         Step::Done
     }
 
@@ -191,6 +255,28 @@ fn is_numbers(bytes: &[u8]) -> bool {
     bytes
         .iter()
         .all(|&byte| byte.is_ascii_digit() || byte == b';')
+}
+
+/// Reads `rgb:<red>/<green>/<blue>`, where each channel has 1 to 4 hex digits.
+fn parse_color(value: &[u8]) -> Option<[u8; 3]> {
+    let channels = value.strip_prefix(RGB_PREFIX)?;
+    let mut color = [0; 3];
+    let mut parts = channels.split(|&byte| byte == b'/');
+    for channel in &mut color {
+        *channel = parse_channel(parts.next()?)?;
+    }
+    parts.next().is_none().then_some(color)
+}
+
+/// Scales a channel of 1 to 4 hex digits to a byte, so `f`, `ff`, and `ffff` are all 255.
+fn parse_channel(digits: &[u8]) -> Option<u8> {
+    if digits.is_empty() || digits.len() > MAX_HEX_DIGITS {
+        return None;
+    }
+    let value = u32::from_str_radix(std::str::from_utf8(digits).ok()?, HEX).ok()?;
+    let max = (1 << (BITS_PER_HEX_DIGIT * digits.len())) - 1;
+    let byte_max = u32::from(u8::MAX);
+    u8::try_from((value * byte_max + max / 2) / max).ok()
 }
 
 /// Turns a 1-based `row;column` pair into a 0-based position.
@@ -277,17 +363,73 @@ mod tests {
     }
 
     #[test]
+    fn color_replies_make_a_palette_with_either_ending() {
+        let bytes = b"\x1b]10;rgb:ffff/8080/0000\x1b\\x\x1b]11;rgb:1/22/333\x07\x1b[?1c";
+        for split in 0..=bytes.len() {
+            let mut replies = Replies::default();
+            replies.feed(&bytes[..split]);
+            replies.feed(&bytes[split..]);
+            assert_eq!(
+                replies.palette(),
+                Some(Palette {
+                    text: [255, 128, 0],
+                    background: [17, 34, 51],
+                })
+            );
+            assert_eq!(replies.finish().input, b"x");
+        }
+    }
+
+    #[test]
+    fn missing_bad_and_late_colors_give_no_palette() {
+        for bytes in [
+            b"\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b[?1c".as_slice(),
+            b"\x1b]10;rgb:ff/ff\x1b\\\x1b]11;rgb:0/0/0\x1b\\\x1b[?1c",
+            b"\x1b]10;rgb:fffff/0/0\x1b\\\x1b]11;rgb:0/0/0\x1b\\\x1b[?1c",
+            b"\x1b]10;rgb:f/f/f\x1b\\\x1b[?1c\x1b]11;rgb:0/0/0\x1b\\",
+        ] {
+            let mut replies = Replies::default();
+            replies.feed(bytes);
+            assert_eq!(replies.palette(), None, "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn other_osc_sequences_are_kept_as_input() {
+        let bytes = b"\x1b]0;title\x07\x1b]12;rgb:0/0/0\x1b\\";
+        let mut replies = Replies::default();
+        replies.feed(bytes);
+        assert_eq!(replies.palette(), None);
+        assert_eq!(replies.finish().input, bytes);
+    }
+
+    #[test]
     fn query_checks_images_and_asks_tmux_for_the_pane_cursor() -> io::Result<()> {
         let mut direct = Vec::new();
         write_query(&mut direct, false)?;
         assert!(direct.windows(3).any(|bytes| bytes == b"a=q"));
-        assert!(direct.ends_with(b"\x1b\\\x1b[6n\x1b[c"));
+        let colors = [TEXT_COLOR_QUERY, BACKGROUND_COLOR_QUERY].concat();
+        let after_graphics = [
+            STRING_END,
+            CURSOR_POSITION_QUERY,
+            &colors,
+            DEVICE_ATTRIBUTES_QUERY,
+        ]
+        .concat();
+        assert!(direct.ends_with(&after_graphics));
 
         let mut tmux = Vec::new();
         write_query(&mut tmux, true)?;
-        assert!(tmux.starts_with(b"\x1b[6n\x1bPtmux;"));
-        let expected = double_escapes(&[graphics_query().as_bytes(), b"\x1b[c"].concat());
-        assert_eq!(&tmux[11..tmux.len() - 2], expected);
+        let questions = [graphics_query().as_bytes(), DEVICE_ATTRIBUTES_QUERY].concat();
+        assert_eq!(
+            tmux,
+            [
+                CURSOR_POSITION_QUERY,
+                &colors,
+                &tmux_passthrough(&questions)
+            ]
+            .concat()
+        );
         Ok(())
     }
 }

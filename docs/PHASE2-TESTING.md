@@ -1,7 +1,8 @@
-# Phase 2 Image Check And Basic Bar
+# Phase 2 The Bar
 
-Stray checks image support and reserves two bottom rows in supported terminals.
-The cat is not drawn yet. Run these checks in kitty and VS Code on macOS.
+Stray checks image support, reserves two bottom rows in supported terminals, and
+draws a sitting cat, its bowl, and a cat tree there. Run these checks in kitty and
+VS Code on macOS.
 
 ## Supported Terminal
 
@@ -28,8 +29,8 @@ should report two fewer rows and the same columns. Print enough lines to scroll:
 for i in {1..100}; do printf 'line %s\n' "$i"; done
 ```
 
-The last two rows should remain empty. Scroll back to check that older output
-is still available. Resize above and below 10 physical rows, checking `stty size`
+The last two rows should keep only the cat and its things. Scroll back to check
+that older output is still available. Resize above and below 10 physical rows, checking `stty size`
 each time. At 9 rows the shell should get all 9; at 10 it should get 8.
 
 Keep a partially typed command at the prompt while resizing. Check that the
@@ -37,8 +38,36 @@ cursor and text stay together, including when changing the window width.
 Exit Stray, then print more lines. The outer shell should use the full height.
 Repeat with `kill -TERM <stray-pid>` from a second window to check cleanup.
 
-This is basic row reservation. Full screen programs can still reset the region
-or write into the bar; protecting those cases is a later Phase 2 change.
+## The Cat
+
+The cat tree sits at the left of the bar, then the bowl, then the cat. The cat
+should be your text color, with eyes in the background color. Start Stray again
+after changing to a light theme: the cat should turn dark.
+
+Resize below 10 rows: the cat and its things go away. Grow the window again: they
+come back. On `exit`, they are removed and nothing is left in the bottom rows.
+
+## Keeping The Bar Whole
+
+Each of these should leave the cat in place, or bring it back right away:
+
+```sh
+clear
+reset
+printf '\e[r'; seq 100
+printf '\e[999;1Hbottom\n'
+```
+
+Press Ctrl L at the prompt. Open and quit `vim` and `less`; the cat should stay
+below them, since they only see the shell rows. Run a Claude Code session and a
+long build. After the `printf '\e[r'` line, the bar must not scroll away. After
+the `\e[999;1H` line, the word should print on the last shell row, not in the bar.
+
+Run `kitten icat` on a picture in kitty. Its picture and the cat should not
+remove each other.
+
+In VS Code, watch whether the cat flickers or vanishes as you type at the prompt.
+Shells clear below the prompt often, and that may erase picture cells there.
 
 ## Unsupported Terminal
 
@@ -53,15 +82,16 @@ terminal name differs from the outer one. No image or reserved rows are expected
 
 ## tmux
 
-Use a separate server to avoid changing existing sessions:
+Drawing inside tmux moved to a later phase. Inside tmux, Stray should keep the
+two rows but draw nothing. Use a separate server to avoid changing existing
+sessions:
 
 ```sh
 tmux -L stray-phase2 -f /dev/null new-session
 ```
 
 Run Stray with passthrough off, then with `tmux set -g allow-passthrough on`.
-Record whether the query succeeds, whether any reply text leaks into the prompt,
-and whether keys still work. Placeholder drawing comes later in Phase 2.
+Check that no reply text leaks into the prompt and that keys still work.
 Exit each test shell and tmux pane when finished.
 
 ## Record Results
