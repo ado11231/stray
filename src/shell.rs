@@ -31,7 +31,7 @@ mod tests {
     use crate::wrapper::{SHELL_MARKER, ShellGuard, forward_output};
     use anyhow::{Context, Result};
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::process::Command;
     use std::time::Duration;
     use stray_cat::env;
@@ -210,6 +210,35 @@ mod tests {
         Ok(())
     }
 
+    /// The prompt the test shells show, so the test knows when to type.
+    const TEST_PROMPT: &str = "READY> ";
+
+    /// How long a test shell may take to show its prompt or to exit.
+    const SHELL_WAIT: Duration = Duration::from_secs(10);
+
+    /// Reads shell output into `bytes` until it holds `count` prompts.
+    fn wait_for_prompts(
+        receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
+        bytes: &mut Vec<u8>,
+        count: usize,
+    ) -> Result<()> {
+        let prompt = TEST_PROMPT.as_bytes();
+        let deadline = std::time::Instant::now() + SHELL_WAIT;
+        while bytes
+            .windows(prompt.len())
+            .filter(|part| *part == prompt)
+            .count()
+            < count
+        {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let chunk = receiver
+                .recv_timeout(left)
+                .context("the shell did not show its prompt")?;
+            bytes.extend(chunk);
+        }
+        Ok(())
+    }
+
     /// Starts `shell` as Stray's own inner shell with the startup script in its settings
     /// file, types each line of `lines`, and returns the exit status in every prompt mark.
     fn prompt_marks(shell: Shell, lines: &[&str]) -> Result<Vec<String>> {
@@ -223,10 +252,12 @@ mod tests {
             Shell::Bash => "bashrc",
             Shell::Zsh => ".zshrc",
         });
-        std::fs::write(&settings, init_script(shell, FAKE_EXECUTABLE))?;
+        // A prompt the test can spot, so it types only once the shell is ready.
+        let script = init_script(shell, FAKE_EXECUTABLE);
+        std::fs::write(&settings, format!("{script}\nPS1='{TEST_PROMPT}'\n"))?;
 
         let pty = native_pty_system().openpty(PtySize::default())?;
-        let reader = pty.master.try_clone_reader()?;
+        let mut reader = pty.master.try_clone_reader()?;
         let mut writer = pty.master.take_writer()?;
         let mut command = CommandBuilder::new(shell_path(shell));
         if matches!(shell, Shell::Bash) {
@@ -249,18 +280,25 @@ mod tests {
 
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let result = forward_output(reader, &mut bytes).map(|()| bytes);
-            let _ = sender.send(result);
+            let mut buffer = [0u8; 4096];
+            // Stops when the shell exits and its terminal closes.
+            while let Ok(count @ 1..) = reader.read(&mut buffer) {
+                if sender.send(buffer[..count].to_vec()).is_err() {
+                    break;
+                }
+            }
         });
-        // Each line waits for the shell to settle, as a person typing would.
-        for line in lines.iter().chain(&["exit"]) {
-            std::thread::sleep(Duration::from_millis(300));
+        // Each line waits for its prompt, as a person typing would. Some systems take a
+        // while to start zsh, and keys typed too early can be lost.
+        let mut bytes = Vec::new();
+        for (typed, line) in lines.iter().chain(&["exit"]).enumerate() {
+            wait_for_prompts(&receiver, &mut bytes, typed + 1)?;
             writer.write_all(format!("{line}\r").as_bytes())?;
         }
-        let bytes = receiver
-            .recv_timeout(Duration::from_secs(5))
-            .context("the shell did not exit")??;
+        // Collect the rest until the shell exits and the reader stops.
+        while let Ok(chunk) = receiver.recv_timeout(SHELL_WAIT) {
+            bytes.extend(chunk);
+        }
         child.child.wait()?;
         std::fs::remove_dir_all(&folder)?;
 
