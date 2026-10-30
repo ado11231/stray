@@ -1,7 +1,7 @@
 //! Finds safe points in shell output where Stray can send its own sequences, and notes
 //! what the output did that could harm the bar.
 
-use crate::escape::ESC;
+use crate::escape::{ESC, PROMPT_MARK};
 
 /// The first byte of a multi-byte UTF-8 character is at least this value.
 const UTF8_MULTI_BYTE_START: u8 = 0x80;
@@ -38,6 +38,8 @@ pub struct Events {
     pub region_bottom: Option<u16>,
     /// The lowest row a cursor move asked for, counted from 1.
     pub lowest_cursor_row: Option<u16>,
+    /// The exit status from the last prompt mark: a command finished and the prompt is back.
+    pub command_status: Option<i32>,
 }
 
 struct State {
@@ -133,9 +135,17 @@ impl vte::Perform for State {
         }
     }
 
-    fn osc_dispatch(&mut self, _: &[&[u8]], bell_terminated: bool) {
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
         // A string ended by ESC \ is finished only after the backslash.
         self.complete = bell_terminated;
+        if let [number, status] = params
+            && *number == PROMPT_MARK.as_bytes()
+            && let Some(status) = std::str::from_utf8(status)
+                .ok()
+                .and_then(|status| status.parse().ok())
+        {
+            self.events.command_status = Some(status);
+        }
     }
 
     fn esc_dispatch(&mut self, _: &[u8], _: bool, byte: u8) {
@@ -180,6 +190,28 @@ impl vte::Perform for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_marks_give_the_exit_status() {
+        let mut boundary = OutputBoundary::default();
+        let mark = |status: &str| format!("\x1b]{PROMPT_MARK};{status}\x07");
+
+        boundary.feed(mark("1").as_bytes());
+        assert_eq!(boundary.take_events().command_status, Some(1));
+
+        // Split across reads, the mark is still found once it ends.
+        let split = mark("130");
+        let (first, second) = split.as_bytes().split_at(4);
+        boundary.feed(first);
+        assert_eq!(boundary.take_events().command_status, None);
+        boundary.feed(second);
+        assert_eq!(boundary.take_events().command_status, Some(130));
+
+        // Other OSC strings and a mark without a number are not marks.
+        boundary.feed(b"\x1b]0;7701\x07");
+        boundary.feed(mark("oops").as_bytes());
+        assert_eq!(boundary.take_events().command_status, None);
+    }
 
     #[test]
     fn waits_for_complete_sequences_and_utf8_characters() {
@@ -230,6 +262,7 @@ mod tests {
                 redraw: false,
                 region_bottom: Some(10),
                 lowest_cursor_row: Some(30),
+                command_status: None,
             }
         );
         assert_eq!(boundary.take_events(), Events::default());

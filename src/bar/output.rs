@@ -2,12 +2,21 @@
 
 use super::scene::{CellSize, Scene};
 use super::{Setup, shell_size};
+use crate::cat::Cat;
 use crate::escape;
+use crate::foreground::Foreground;
 use crate::frames::Frames;
 use crate::output_boundary::OutputBoundary;
+use crate::schedule::Clock;
 use portable_pty::PtySize;
 use std::io::{self, Write};
 use std::num::NonZeroU16;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+/// When the shell is in the middle of a sequence, try drawing the cat again this soon.
+const BUSY_RETRY: Duration = Duration::from_millis(20);
 
 /// Writes shell output to the terminal and keeps the bar rows out of the scroll region.
 ///
@@ -29,6 +38,12 @@ pub struct Output<W: Write> {
     scene: Option<Scene>,
     /// The size of a character cell in pixels, when the terminal reports it.
     cell: Option<CellSize>,
+    /// What the cat is doing, which picks the frame the scene shows.
+    cat: Cat,
+    /// Raised by the keyboard thread when a key is pressed, and lowered here.
+    typed: Arc<AtomicBool>,
+    /// Tells which program is in front, once the shell has started.
+    foreground: Option<Foreground>,
 }
 
 impl<W: Write> Output<W> {
@@ -51,7 +66,16 @@ impl<W: Write> Output<W> {
             changed_region: false,
             scene: (images_supported && !inside_tmux).then(|| Scene::new(Frames::new(palette))),
             cell: cell_size(size),
+            typed: Arc::new(AtomicBool::new(false)),
+            foreground: None,
+            cat: Cat::new(
+                Instant::now(),
+                Clock::from_env(Instant::now()).map_err(io::Error::other)?,
+            ),
         };
+        output
+            .cat
+            .set_bar_width(CellSize::sprite_width(output.cell, size.cols));
         if let Some(screen) = &mut output.screen {
             let last_row = shell.rows.saturating_sub(1);
             let last_column = shell.cols.saturating_sub(1);
@@ -75,6 +99,8 @@ impl<W: Write> Output<W> {
         let shell = shell_size(size, self.screen.is_some());
         self.terminal_size = size;
         self.cell = cell_size(size);
+        self.cat
+            .set_bar_width(CellSize::sprite_width(self.cell, size.cols));
         if let Some(screen) = &mut self.screen {
             screen.set_size(at_least_one(shell.rows), at_least_one(shell.cols));
             self.pending = self.changed_region || shell.rows != size.rows;
@@ -89,6 +115,9 @@ impl<W: Write> Output<W> {
             return Ok(());
         }
         let events = self.boundary.take_events();
+        if let Some(status) = events.command_status {
+            self.cat.command_finished(status, Instant::now());
+        }
         let Some(parser) = &self.screen else {
             return Ok(());
         };
@@ -115,6 +144,52 @@ impl<W: Write> Output<W> {
         self.apply_region()
     }
 
+    /// The flag the keyboard thread raises on every key, so the cat can look up.
+    pub fn typed(&self) -> Arc<AtomicBool> {
+        // The keyboard thread holds its own handle to the same flag.
+        Arc::clone(&self.typed)
+    }
+
+    /// Starts telling the cat which program is in front, once the shell is running.
+    pub fn watch_foreground(&mut self, foreground: Foreground) {
+        self.foreground = Some(foreground);
+    }
+
+    /// Moves the cat on to its frame for `now`, and says when it should be called again.
+    /// Returns `None` when there is no cat to move.
+    pub fn animate(&mut self, now: Instant) -> io::Result<Option<Instant>> {
+        if self.typed.swap(false, Ordering::Relaxed) {
+            self.cat.key_pressed(now);
+        }
+        if let Some(parser) = &self.screen {
+            self.cat.set_full_screen(parser.screen().alternate_screen());
+        }
+        if let Some(foreground) = &mut self.foreground {
+            self.cat.set_front(foreground.front(), now);
+        }
+        let (Some(parser), Some(scene)) = (&self.screen, &mut self.scene) else {
+            return Ok(None);
+        };
+        if self.pending || !self.boundary.ready() {
+            // The bar is drawn whole at the next safe point, or the shell is mid sequence.
+            return Ok(Some(now + BUSY_RETRY));
+        }
+        self.cat.tick(now);
+        let next_change = self.cat.next_change(now);
+        let screen = parser.screen();
+        let rows = screen.size().0.get();
+        let sprite = self.cat.sprite(now);
+        if rows >= self.terminal_size.rows || scene.cat() == Some(sprite) {
+            // There is no bar in a short window, or the cat already shows this frame.
+            return Ok(Some(next_change));
+        }
+        let origin = self.boundary.origin();
+        draw_in_bar(&mut self.writer, origin, screen, |writer| {
+            scene.draw_cat(writer, rows + 1, self.cell, sprite)
+        })?;
+        Ok(Some(next_change))
+    }
+
     /// Sends the scroll region and draws the bar, but only when no sequence or synchronized
     /// update is open.
     fn apply_region(&mut self) -> io::Result<()> {
@@ -126,33 +201,48 @@ impl<W: Write> Output<W> {
         };
         let screen = parser.screen();
         let rows = screen.size().0.get();
+        let terminal_rows = self.terminal_size.rows;
+        let (scene, cell) = (&mut self.scene, self.cell);
+        let sprite = self.cat.sprite(Instant::now());
         self.changed_region = true;
-        self.writer.write_all(escape::ORIGIN_MODE_OFF)?;
-        if rows < self.terminal_size.rows {
-            // Limit scrolling to the shell rows, then clear the bar rows below them.
-            self.writer
-                .write_all(escape::scroll_region(rows).as_bytes())?;
-            self.writer
-                .write_all(escape::move_cursor(rows + 1, 1).as_bytes())?;
-            self.writer.write_all(escape::CLEAR_BELOW)?;
-            if let Some(scene) = &mut self.scene {
-                scene.draw(&mut self.writer, rows + 1, self.cell)?;
+        draw_in_bar(&mut self.writer, self.boundary.origin(), screen, |writer| {
+            if rows < terminal_rows {
+                // Limit scrolling to the shell rows, then clear the bar rows below them.
+                writer.write_all(escape::scroll_region(rows).as_bytes())?;
+                writer.write_all(escape::move_cursor(rows + 1, 1).as_bytes())?;
+                writer.write_all(escape::CLEAR_BELOW)?;
+                if let Some(scene) = scene {
+                    scene.draw(writer, rows + 1, cell, sprite)?;
+                }
+            } else {
+                writer.write_all(escape::RESET_SCROLL_REGION)?;
+                // The window is too short for the bar, so the cat goes away until it grows.
+                if let Some(scene) = scene {
+                    scene.clear(writer)?;
+                }
             }
-        } else {
-            self.writer.write_all(escape::RESET_SCROLL_REGION)?;
-            // The window is too short for the bar, so the cat goes away until it grows.
-            if let Some(scene) = &mut self.scene {
-                scene.clear(&mut self.writer)?;
-            }
-        }
-        if self.boundary.origin() {
-            self.writer.write_all(escape::ORIGIN_MODE_ON)?;
-        }
-        restore_cursor(&mut self.writer, screen)?;
-        self.writer.flush()?;
+            Ok(())
+        })?;
         self.pending = false;
         Ok(())
     }
+}
+
+/// Turns origin mode off so the cursor can reach the bar, runs `draw`, then puts back
+/// origin mode, the shell's cursor, and its text style.
+fn draw_in_bar<W: Write>(
+    writer: &mut W,
+    origin: bool,
+    screen: &vt100::Screen,
+    draw: impl FnOnce(&mut W) -> io::Result<()>,
+) -> io::Result<()> {
+    writer.write_all(escape::ORIGIN_MODE_OFF)?;
+    draw(writer)?;
+    if origin {
+        writer.write_all(escape::ORIGIN_MODE_ON)?;
+    }
+    restore_cursor(writer, screen)?;
+    writer.flush()
 }
 
 /// Puts back the shell's cursor position and text style, which changing the region resets.
@@ -174,6 +264,7 @@ fn at_least_one(size: u16) -> NonZeroU16 {
 impl<W: Write> Write for Output<W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.writer.write_all(bytes)?;
+        self.cat.output_seen(Instant::now());
         if let Some(screen) = &mut self.screen {
             screen.process(bytes);
             self.boundary.feed(bytes);

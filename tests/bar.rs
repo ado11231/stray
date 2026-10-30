@@ -4,6 +4,7 @@ use portable_pty::PtySize;
 use std::cell::RefCell;
 use std::io::{self, Write};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use stray_cat::bar::{Output, Setup};
 use stray_cat::escape::{self, RESET_SCROLL_REGION, RESTORE_TERMINAL};
 use stray_cat::frames::Palette;
@@ -311,5 +312,66 @@ fn the_terminal_colors_reach_the_pictures() -> Result {
     let (plain, colored) = (plain.take(), colored.take());
     assert_eq!(count(&colored, SHOW), PICTURES_IN_BAR);
     assert_ne!(plain, colored);
+    Ok(())
+}
+
+#[test]
+fn the_cat_moves_on_and_the_cursor_goes_back() -> Result {
+    let writer = Writer::default();
+    let mut terminal = vt100::Parser::default();
+    let mut output = Output::new(writer.clone(), size(24), BAR)?;
+    output.write_all(b"\x1b[5;6Hprompt")?;
+    terminal.process(&writer.take());
+    let cursor = terminal.screen().cursor_position();
+
+    // A second later the cat shows a later frame of its sit.
+    let later = Instant::now() + Duration::from_secs(1);
+    let next = output.animate(later)?.ok_or("the cat should keep moving")?;
+    let drawn = writer.take();
+    terminal.process(&drawn);
+    assert!(next > later);
+    assert_eq!(drawn.windows(3).filter(|bytes| *bytes == b"a=T").count(), 1);
+    assert_eq!(terminal.screen().cursor_position(), cursor);
+
+    // Asked again for the same moment, nothing changed, so nothing is sent.
+    output.animate(later)?;
+    assert!(writer.take().is_empty());
+    Ok(())
+}
+
+#[test]
+fn the_cat_waits_while_a_sequence_is_open() -> Result {
+    let writer = Writer::default();
+    let mut output = Output::new(writer.clone(), size(24), BAR)?;
+    output.write_all(b"\x1b[")?;
+    writer.take();
+
+    let later = Instant::now() + Duration::from_secs(1);
+    let retry = output.animate(later)?.ok_or("the cat should try again")?;
+    assert!(
+        writer.take().is_empty(),
+        "nothing may cut into the sequence"
+    );
+    assert!(retry > later);
+
+    output.write_all(b"m")?;
+    writer.take();
+    output.animate(later)?;
+    assert!(contains(&writer.take(), b"a=T"));
+    Ok(())
+}
+
+#[test]
+fn without_images_there_is_no_cat_to_move() -> Result {
+    let writer = Writer::default();
+    let setup = Setup {
+        images_supported: false,
+        ..BAR
+    };
+    let mut output = Output::new(writer.clone(), size(24), setup)?;
+    writer.take();
+
+    assert_eq!(output.animate(Instant::now())?, None);
+    assert!(writer.take().is_empty());
     Ok(())
 }

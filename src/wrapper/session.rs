@@ -9,8 +9,10 @@ use portable_pty::{CommandBuilder, MasterPty};
 use signal_hook::iterator::Signals;
 use std::io::{Read, Stdout, Write};
 use std::process::ExitCode;
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::time::Instant;
 use stray_cat::bar;
+use stray_cat::foreground::Foreground;
 
 /// How many events can wait in the queue before workers pause.
 const EVENT_QUEUE_SIZE: usize = 16;
@@ -73,7 +75,7 @@ impl ShellSession {
             .context("could not open PTY writer")?;
 
         let raw_mode = terminal::RawModeGuard::enable()?;
-        let output = bar::Output::new(std::io::stdout(), size, setup)
+        let mut output = bar::Output::new(std::io::stdout(), size, setup)
             .context("could not reserve bar rows")?;
 
         let shell = ShellGuard {
@@ -81,6 +83,13 @@ impl ShellSession {
         };
         // Only the shell should hold its side of the PTY, so output ends when the shell exits.
         drop(pty.slave);
+        let shell_id = shell
+            .child
+            .process_id()
+            .and_then(|id| i32::try_from(id).ok());
+        if let (Some(terminal), Some(shell_id)) = (pty.master.as_raw_fd(), shell_id) {
+            output.watch_foreground(Foreground::new(terminal, shell_id));
+        }
 
         Ok(Self {
             shell,
@@ -143,25 +152,45 @@ fn forward_session(
     resize: impl FnMut(&mut bar::Output<Stdout>) -> Result<()>,
 ) -> Result<()> {
     // The input thread may stay blocked on stdin, so it is not joined.
-    let _input_thread = start_input_thread(writer, early_input, sender.clone())?;
+    let _input_thread = start_input_thread(writer, early_input, output.typed(), sender.clone())?;
     let output_thread = start_output_thread(reader, sender)?;
     // Owning the receiver here closes the queue before resize cleanup on any error.
-    forward_session_events(receiver, output, resize)?;
+    forward_session_events(receiver, output, resize, |output, now| {
+        Ok(output.animate(now)?)
+    })?;
     output_thread
         .join()
         .map_err(|_| anyhow::anyhow!("shell output thread panicked"))
 }
 
 /// Handles session events until shell output ends or a worker fails.
+///
+/// Between events, `animate` moves the cat on and says when it wants to be called again.
 pub fn forward_session_events<W: Write>(
     receiver: Receiver<SessionEvent>,
     mut output: W,
     mut resize: impl FnMut(&mut W) -> Result<()>,
+    mut animate: impl FnMut(&mut W, Instant) -> Result<Option<Instant>>,
 ) -> Result<()> {
+    let mut next_frame = Some(Instant::now());
     loop {
-        let event = receiver
-            .recv()
-            .context("session event channel closed unexpectedly")?;
+        // Checked before waiting, so steady output cannot hold the cat still.
+        let now = Instant::now();
+        if next_frame.is_some_and(|due| due <= now) {
+            next_frame = animate(&mut output, now)?;
+        }
+        let event = match next_frame {
+            Some(due) => match receiver.recv_timeout(due.saturating_duration_since(now)) {
+                Ok(event) => event,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    anyhow::bail!("session event channel closed unexpectedly")
+                }
+            },
+            None => receiver
+                .recv()
+                .context("session event channel closed unexpectedly")?,
+        };
 
         match event {
             SessionEvent::Output(bytes) => {
@@ -193,12 +222,18 @@ mod tests {
     use std::io::{self, BufWriter, ErrorKind};
     use std::process::{Command, Stdio};
     use std::thread;
+    use std::time::Duration;
 
     /// Prints the marker, then the real terminal name, so the two can be compared.
     const PRINT_MARKER_AND_TTY: &str = "printf '%s\\n' \"$STRAY_TTY\"; /usr/bin/tty";
 
     /// Output that arrives after the session should have stopped.
     const TOO_LATE: &[u8] = b"too late";
+
+    /// Stands in for the cat when a test only checks events.
+    fn no_animation<W>(_: &mut W, _: Instant) -> Result<Option<Instant>> {
+        Ok(None)
+    }
 
     fn shell_command(script: &str) -> CommandBuilder {
         let mut command = CommandBuilder::new("/bin/sh");
@@ -315,7 +350,7 @@ mod tests {
         sender.send(SessionEvent::Output(TOO_LATE.to_vec()))?;
         let mut output = Vec::new();
 
-        let error = forward_session_events(receiver, &mut output, |_| Ok(()))
+        let error = forward_session_events(receiver, &mut output, |_| Ok(()), no_animation)
             .err()
             .context("termination should stop the loop")?;
 
@@ -361,9 +396,14 @@ mod tests {
         sender.send(SessionEvent::Output(TOO_LATE.to_vec()))?;
         let mut output = Vec::new();
 
-        let result = forward_session_events(receiver, &mut output, |_| {
-            panic!("test resize panic");
-        });
+        let result = forward_session_events(
+            receiver,
+            &mut output,
+            |_| {
+                panic!("test resize panic");
+            },
+            no_animation,
+        );
 
         assert!(matches!(result, Err(error) if error.to_string() == "resize handler panicked"));
         assert!(output.is_empty());
@@ -393,11 +433,16 @@ mod tests {
         let calls = RefCell::new(Vec::new());
         let session_thread = thread::current().id();
 
-        forward_session_events(receiver, Recorder(&calls), |_| {
-            assert_eq!(thread::current().id(), session_thread);
-            calls.borrow_mut().extend_from_slice(b"resize|");
-            Ok(())
-        })?;
+        forward_session_events(
+            receiver,
+            Recorder(&calls),
+            |_| {
+                assert_eq!(thread::current().id(), session_thread);
+                calls.borrow_mut().extend_from_slice(b"resize|");
+                Ok(())
+            },
+            no_animation,
+        )?;
 
         assert_eq!(*calls.borrow(), b"before|resize|after|");
         Ok(())
@@ -413,7 +458,7 @@ mod tests {
         let mut bytes = Vec::new();
         let mut output = BufWriter::new(&mut bytes);
 
-        forward_session_events(receiver, &mut output, |_| Ok(()))?;
+        forward_session_events(receiver, &mut output, |_| Ok(()), no_animation)?;
 
         assert!(
             output.buffer().is_empty(),
@@ -442,9 +487,10 @@ mod tests {
             sender.send(SessionEvent::OutputFinished(Ok(())))?;
             let mut output = Vec::new();
 
-            let error = forward_session_events(receiver, &mut output, |_| Err(failure()))
-                .err()
-                .context("the worker error should stop the loop")?;
+            let error =
+                forward_session_events(receiver, &mut output, |_| Err(failure()), no_animation)
+                    .err()
+                    .context("the worker error should stop the loop")?;
 
             assert_eq!(
                 error.downcast_ref::<io::Error>().map(io::Error::kind),
@@ -465,7 +511,7 @@ mod tests {
         sender.send(SessionEvent::InputFinished(Ok(())))?;
         drop(sender);
 
-        let result = forward_session_events(receiver, io::sink(), |_| Ok(()));
+        let result = forward_session_events(receiver, io::sink(), |_| Ok(()), no_animation);
 
         assert!(matches!(
             result,
@@ -500,10 +546,14 @@ mod tests {
             sender.send(SessionEvent::Output(b"shell> ".to_vec()))?;
             sender.send(SessionEvent::OutputFinished(Ok(())))?;
 
-            let error =
-                forward_session_events(receiver, FailingWriter { fail_on_flush }, |_| Ok(()))
-                    .err()
-                    .context("the terminal failure should stop the loop")?;
+            let error = forward_session_events(
+                receiver,
+                FailingWriter { fail_on_flush },
+                |_| Ok(()),
+                no_animation,
+            )
+            .err()
+            .context("the terminal failure should stop the loop")?;
 
             assert_eq!(error.to_string(), expected);
             assert_eq!(
@@ -554,6 +604,62 @@ mod tests {
 
         assert!(!raw_mode_enabled()?);
         assert_eq!(terminal_settings()?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn the_cat_moves_while_the_shell_is_quiet() -> Result<()> {
+        let (sender, receiver) = sync_channel(1);
+        let frames = RefCell::new(0);
+        let output_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            sender.send(SessionEvent::OutputFinished(Ok(())))
+        });
+
+        forward_session_events(
+            receiver,
+            io::sink(),
+            |_| Ok(()),
+            |_, now| {
+                *frames.borrow_mut() += 1;
+                Ok(Some(now + Duration::from_millis(5)))
+            },
+        )?;
+
+        output_thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("sender thread panicked"))??;
+        assert!(*frames.borrow() > 2, "the cat should move with no events");
+        Ok(())
+    }
+
+    #[test]
+    fn steady_output_does_not_hold_the_cat_still() -> Result<()> {
+        let (sender, receiver) = sync_channel(4);
+        let calls = RefCell::new(0);
+        let output_thread = thread::spawn(move || -> Result<()> {
+            let stop = Instant::now() + Duration::from_millis(50);
+            while Instant::now() < stop {
+                sender.send(SessionEvent::Output(b"x".to_vec()))?;
+            }
+            sender.send(SessionEvent::OutputFinished(Ok(())))?;
+            Ok(())
+        });
+
+        forward_session_events(
+            receiver,
+            io::sink(),
+            |_| Ok(()),
+            |_, now| {
+                *calls.borrow_mut() += 1;
+                Ok(Some(now + Duration::from_millis(5)))
+            },
+        )?;
+
+        output_thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("sender thread panicked"))??;
+        assert!(*calls.borrow() > 2, "the cat should move during output");
         Ok(())
     }
 }

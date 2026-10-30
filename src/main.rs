@@ -1,6 +1,5 @@
 //! The `stray` command: installs the startup line and wraps the shell in a PTY.
 
-mod env;
 mod image_check;
 mod install;
 mod shell;
@@ -12,7 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::ExitCode;
-use stray_cat::bar;
+use stray_cat::{bar, env};
 
 #[derive(Parser)]
 #[command(name = "stray", version, about)]
@@ -113,7 +112,8 @@ fn start(shell: Option<OsString>, login: bool) -> Result<ExitCode> {
 
 /// Reports why Stray could not wrap the shell, then runs the shell directly.
 fn fall_back(error: &anyhow::Error, shell_path: &OsStr, login: bool) -> Result<ExitCode> {
-    eprintln!("stray: {error}; starting shell directly");
+    // The full chain names the real cause, such as a bad test setting.
+    eprintln!("stray: {error:#}; starting shell directly");
     wrapper::run_shell_directly(shell_path, login)
 }
 

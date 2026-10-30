@@ -1,11 +1,11 @@
 //! `stray install` and `stray uninstall`: add or remove one startup line in shell settings.
 
-use crate::env;
 use anyhow::{Context, Result, bail};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use stray_cat::env;
 
 /// Ends the startup line, so uninstall can find exactly the line Stray added.
 const LINE_TAG: &str = "# stray";
