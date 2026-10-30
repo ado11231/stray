@@ -1,3 +1,4 @@
 /target
 .DS_Store
 /nvim.log
+__pycache__/
