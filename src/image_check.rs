@@ -5,9 +5,9 @@
 
 use std::io::{self, Write};
 use stray_cat::escape::{
-    CSI, CSI_PRIVATE, CURSOR_POSITION_QUERY, DEVICE_ATTRIBUTES_QUERY, ESC, GRAPHICS_START,
-    STRING_END, TMUX_PASSTHROUGH_START,
+    CSI, CSI_PRIVATE, CURSOR_POSITION_QUERY, DEVICE_ATTRIBUTES_QUERY, GRAPHICS_START, STRING_END,
 };
+use stray_cat::image::tmux_passthrough;
 
 pub mod hint;
 pub mod probe;
@@ -39,28 +39,14 @@ pub fn write_query(output: &mut impl Write, inside_tmux: bool) -> io::Result<()>
         // Ask tmux for the pane cursor, rather than the outer terminal cursor.
         output.write_all(CURSOR_POSITION_QUERY)?;
         // tmux passes the rest on to the outer terminal.
-        output.write_all(TMUX_PASSTHROUGH_START)?;
-        output.write_all(&double_escapes(graphics.as_bytes()))?;
-        output.write_all(&double_escapes(DEVICE_ATTRIBUTES_QUERY))?;
-        output.write_all(STRING_END)?;
+        let questions = [graphics.as_bytes(), DEVICE_ATTRIBUTES_QUERY].concat();
+        output.write_all(&tmux_passthrough(&questions))?;
     } else {
         output.write_all(graphics.as_bytes())?;
         output.write_all(CURSOR_POSITION_QUERY)?;
         output.write_all(DEVICE_ATTRIBUTES_QUERY)?;
     }
     output.flush()
-}
-
-/// tmux needs every ESC inside a passthrough message written twice.
-fn double_escapes(bytes: &[u8]) -> Vec<u8> {
-    let mut doubled = Vec::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        if byte == ESC {
-            doubled.push(ESC);
-        }
-        doubled.push(byte);
-    }
-    doubled
 }
 
 /// What the parser decided about the bytes waiting in `pending`.
@@ -285,9 +271,11 @@ mod tests {
 
         let mut tmux = Vec::new();
         write_query(&mut tmux, true)?;
-        assert!(tmux.starts_with(b"\x1b[6n\x1bPtmux;"));
-        let expected = double_escapes(&[graphics_query().as_bytes(), b"\x1b[c"].concat());
-        assert_eq!(&tmux[11..tmux.len() - 2], expected);
+        let questions = [graphics_query().as_bytes(), b"\x1b[c"].concat();
+        assert_eq!(
+            tmux,
+            [b"\x1b[6n".as_slice(), &tmux_passthrough(&questions)].concat()
+        );
         Ok(())
     }
 }
