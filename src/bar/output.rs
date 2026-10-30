@@ -83,6 +83,38 @@ impl<W: Write> Output<W> {
         Ok(shell)
     }
 
+    /// Fixes what the shell's output did to the bar, once the output is at a safe point.
+    fn repair(&mut self) -> io::Result<()> {
+        if !self.boundary.ready() {
+            return Ok(());
+        }
+        let events = self.boundary.take_events();
+        let Some(parser) = &self.screen else {
+            return Ok(());
+        };
+        let screen = parser.screen();
+        let rows = screen.size().0.get();
+        if rows < self.terminal_size.rows {
+            // A scroll region past the shell rows would let the bar scroll with the text.
+            let region_reaches_bar = events
+                .region_bottom
+                .is_some_and(|bottom| bottom == 0 || bottom > rows);
+            // The program thinks the screen ends at the shell rows, but the terminal still
+            // lets the cursor go lower. With origin mode on, the region keeps it out.
+            let cursor_in_bar =
+                !self.boundary.origin() && events.lowest_cursor_row.is_some_and(|row| row > rows);
+            if events.redraw || region_reaches_bar {
+                self.pending = true;
+            } else if cursor_in_bar {
+                // The screen copy has the same size as the shell, so its cursor stayed above
+                // the bar.
+                restore_cursor(&mut self.writer, screen)?;
+                self.writer.flush()?;
+            }
+        }
+        self.apply_region()
+    }
+
     /// Sends the scroll region and draws the bar, but only when no sequence or synchronized
     /// update is open.
     fn apply_region(&mut self) -> io::Result<()> {
@@ -145,7 +177,7 @@ impl<W: Write> Write for Output<W> {
         if let Some(screen) = &mut self.screen {
             screen.process(bytes);
             self.boundary.feed(bytes);
-            self.apply_region()?;
+            self.repair()?;
         }
         Ok(bytes.len())
     }

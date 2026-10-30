@@ -183,3 +183,73 @@ fn inside_tmux_the_rows_are_kept_but_nothing_is_drawn_yet() -> Result {
     assert_eq!(count(&writer.take(), REMOVE), 0);
     Ok(())
 }
+
+/// The scroll region Stray sets in a 24 row window.
+const REGION: &[u8] = b"\x1b[1;22r";
+
+#[test]
+fn clears_resets_and_full_screen_switches_draw_the_bar_again() -> Result {
+    for bytes in [
+        b"\x1b[H\x1b[2J".as_slice(),
+        b"\x1b[3J",
+        b"\x1bc",
+        b"\x1b[!p",
+        b"\x1b[r",
+        b"\x1b[1;24r",
+        b"\x1b[?1049h",
+        b"\x1b[?1049l",
+    ] {
+        let writer = Writer::default();
+        let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+        writer.take();
+        output.write_all(bytes)?;
+        let written = writer.take();
+        assert!(contains(&written, REGION), "{bytes:?}");
+        assert_eq!(count(&written, SHOW), PICTURES_IN_BAR, "{bytes:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn everyday_output_leaves_the_bar_alone() -> Result {
+    let writer = Writer::default();
+    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    writer.take();
+    // Text, clearing below the prompt, a region inside the shell rows, and a move to the
+    // last shell row.
+    output.write_all(b"hello\r\n\x1b[J\x1b[5;10r\x1b[r\x1b[1;22r\x1b[22;1H")?;
+    let written = writer.take();
+    assert_eq!(count(&written, SHOW), 0);
+    assert_eq!(count(&written, REGION), 1, "only the program's own region");
+    Ok(())
+}
+
+#[test]
+fn a_redraw_waits_for_a_synchronized_update_to_end() -> Result {
+    let writer = Writer::default();
+    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    writer.take();
+    output.write_all(b"\x1b[?2026h\x1b[2J")?;
+    assert_eq!(count(&writer.take(), SHOW), 0);
+    output.write_all(b"\x1b[?2026l")?;
+    assert_eq!(count(&writer.take(), SHOW), PICTURES_IN_BAR);
+    Ok(())
+}
+
+#[test]
+fn cursor_moves_into_the_bar_are_sent_back_to_the_last_shell_row() -> Result {
+    let writer = Writer::default();
+    let mut terminal = vt100::Parser::default();
+    let mut output = Output::new(writer.clone(), size(24), true, false, Some((0, 0)))?;
+    terminal.process(&writer.take());
+    for (bytes, expected) in [
+        (b"\x1b[24;5H".as_slice(), (21, 4)),
+        (b"\x1b[3;1H\x1b[30d", (21, 0)),
+        (b"\x1b[999;999H", (21, 79)),
+    ] {
+        output.write_all(bytes)?;
+        terminal.process(&writer.take());
+        assert_eq!(terminal.screen().cursor_position(), expected, "{bytes:?}");
+    }
+    Ok(())
+}
