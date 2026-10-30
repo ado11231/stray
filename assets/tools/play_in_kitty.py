@@ -20,7 +20,6 @@ import select
 import struct
 import sys
 import termios
-import time
 import tty
 from pathlib import Path
 

@@ -3,18 +3,17 @@
 Usage: python3 detail_sleep.py
 The sources for sleep and wake are not in the repo (see build_sprites.py), so
 this edits the saved frames in place. It finds the nose and the ear tips in each
-frame, because the head moves while the cat wakes. Running it again does no harm:
-once the nose is gone it is left alone, and the ear lines land on the same spots.
+frame, because the head moves while the cat wakes. It has already been run on
+the saved frames, so do not run it again: the nose would be left alone, but the
+ear lines would be drawn again on the same spots, darkening their soft edges.
 """
-from pathlib import Path
-
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 
-from face import EAR_LINE, EAR_LINE_W, SCALE
+from face import EAR_LINE, EAR_LINE_W
+from shapes import SCALE, SPRITES
 
-SPRITES = Path(__file__).resolve().parent.parent / "sprites"
 DARK = 80                # anything darker than this on the cat is an eye or the nose
 NOSE_MARGIN = 2          # px painted around the nose, so its soft edge goes too
 HEAD = (200, 100, 300, 200)   # where to look for the ears: left, top, right, bottom

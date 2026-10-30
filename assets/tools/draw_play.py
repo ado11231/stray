@@ -13,7 +13,8 @@ import math
 from PIL import Image, ImageDraw
 
 import draw_sit as cat
-from draw_sit import GROUND, PAW_R, FOOT, SCALE, big, blend, draw_frame, save
+from draw_sit import FOOT, PAW_R, blend, draw_frame
+from shapes import GROUND, SCALE, big, dot, save
 
 # low in front, the back end a little up, looking ahead at the ball. The back legs
 # are folded under the body, ready to push: the paw forward, the heel back.
@@ -60,7 +61,7 @@ def draw_ball(turn):
     im = Image.new("RGBA", big(BALL_CANVAS), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im)
     mid = (BALL_CANVAS[0] / 2, GROUND - BALL_R)
-    cat.dot(draw, mid, BALL_R, BALL)
+    dot(draw, mid, BALL_R, BALL)
     a = 2 * math.pi * turn
     for side in (1, -1):
         # a line through the middle, from one edge to the other, that turns with the ball

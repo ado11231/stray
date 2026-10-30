@@ -9,7 +9,7 @@ on row 204.
 """
 from PIL import Image, ImageDraw
 
-from draw_sit import GROUND, SCALE, big, dot, save
+from shapes import GROUND, SCALE, big, dot, save
 
 CANVAS = (150, 215)
 WOOD = (196, 176, 150, 255)      # a soft warm grey for the base, shelf and bed
@@ -59,4 +59,5 @@ def draw_tower():
     return im.resize(CANVAS, Image.LANCZOS)
 
 
-save("tower", [draw_tower()])
+if __name__ == "__main__":
+    save("tower", [draw_tower()])

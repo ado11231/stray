@@ -10,21 +10,13 @@ the run pushes off with both back legs, lands on both front legs, and rocks
 the body between. Frames use the same 309x215 canvas as sleep and wake, feet on row 204.
 """
 import math
-from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 
 from face import add_details
-
-TOOLS = Path(__file__).resolve().parent
-SPRITES = TOOLS.parent / "sprites"
-
-SCALE = 4                # drawing happens this many times bigger, then shrinks
-CANVAS = (309, 215)
-GROUND = 204             # feet line, same as sleep and wake
-WHITE = (255, 255, 255, 255)
+from shapes import CANVAS, GROUND, SCALE, TOOLS, WHITE, big, dot, joint, oval, save, taper
 
 # legs, in final pixels
 REAR_DROP = 9            # px the back end sits lower than the front, so the rump is not high
@@ -70,35 +62,6 @@ def distance(gait):
     return gait["stride"] / gait["on_floor"]
 
 
-def big(xy):
-    return (xy[0] * SCALE, xy[1] * SCALE)
-
-
-def dot(draw, xy, r, color):
-    x, y = big(xy)
-    r *= SCALE
-    draw.ellipse([x - r, y - r, x + r, y + r], fill=color)
-
-
-def oval(draw, middle, half, color):
-    x, y = big(middle)
-    w, h = half[0] * SCALE, half[1] * SCALE
-    draw.ellipse([x - w, y - h, x + w, y + h], fill=color)
-
-
-def taper(draw, a, b, width_a, width_b):
-    """A rounded piece that is width_a wide at a and width_b wide at b."""
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    length = math.hypot(dx, dy) or 1
-    nx, ny = -dy / length, dx / length
-    ra, rb = width_a / 2, width_b / 2
-    corners = [(a[0] + nx * ra, a[1] + ny * ra), (b[0] + nx * rb, b[1] + ny * rb),
-               (b[0] - nx * rb, b[1] - ny * rb), (a[0] - nx * ra, a[1] - ny * ra)]
-    draw.polygon([big(c) for c in corners], fill=WHITE)
-    dot(draw, a, ra, WHITE)
-    dot(draw, b, rb, WHITE)
-
-
 def paw_spot(hip_x, turn, gait):
     """Where a paw is at this point of its step, as x and y in the frame."""
     stride, on_floor = gait["stride"], gait["on_floor"]
@@ -111,22 +74,11 @@ def paw_spot(hip_x, turn, gait):
     return hip_x - stride / 2 + stride * ease, floor_y - gait["lift"] * math.sin(math.pi * share)
 
 
-def joint(hip, paw):
-    """The bend between hip and paw, on the side away from the head."""
-    dx, dy = paw[0] - hip[0], paw[1] - hip[1]
-    reach = min(math.hypot(dx, dy), UPPER + LOWER - 0.01)
-    toward = math.atan2(dy, dx)
-    bend = math.acos((UPPER ** 2 + reach ** 2 - LOWER ** 2) / (2 * UPPER * reach))
-    a = (hip[0] + UPPER * math.cos(toward + bend), hip[1] + UPPER * math.sin(toward + bend))
-    b = (hip[0] + UPPER * math.cos(toward - bend), hip[1] + UPPER * math.sin(toward - bend))
-    return a if a[0] < b[0] else b
-
-
 def draw_leg(draw, hip, turn, widths, top, gait, spread=0):
     """One leg: a round top that blends into the body, two tapered parts, a foot.
     spread moves where the paw steps, forward or back from under the hip."""
     paw = paw_spot(hip[0] + spread, turn, gait)
-    knee = joint(hip, paw)
+    knee = joint(hip, paw, UPPER, LOWER)
     # the thigh or shoulder leans a little toward the leg, so it moves with it
     lean = ((knee[0] - hip[0]) * 0.25, (knee[1] - hip[1]) * 0.25)
     oval(draw, (hip[0] + lean[0], hip[1] + lean[1]), top, WHITE)
@@ -200,17 +152,9 @@ def draw_frame(body, k, gait):
     return im.resize(CANVAS, Image.LANCZOS)
 
 
-def save(name, frames):
-    folder = SPRITES / name
-    folder.mkdir(exist_ok=True)
-    for old in folder.glob("*.png"):
-        old.unlink()
-    for i, im in enumerate(frames):
-        im.save(folder / f"{i:02d}.png")
-
-
-body = straighten_back(cut_old_tail(add_details(Image.open(TOOLS / "run_body.png"))))
-for name, gait in (("walk", WALK), ("run", RUN)):
-    save(name, [draw_frame(body, k, gait) for k in range(gait["frames"])])
-    print(f"{name}: {gait['frames']} frames, moves {distance(gait):.1f} px per loop, "
-          f"{distance(gait) / CANVAS[0]:.3f} image widths")
+if __name__ == "__main__":
+    body = straighten_back(cut_old_tail(add_details(Image.open(TOOLS / "run_body.png"))))
+    for name, gait in (("walk", WALK), ("run", RUN)):
+        save(name, [draw_frame(body, k, gait) for k in range(gait["frames"])])
+        print(f"{name}: {gait['frames']} frames, moves {distance(gait):.1f} px per loop, "
+              f"{distance(gait) / CANVAS[0]:.3f} image widths")

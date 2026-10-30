@@ -9,7 +9,6 @@ the back end lowers to the floor while the head rises. Played backwards it
 gets the cat up to walk. Frames use the same 309x215 canvas as sleep and wake, feet on row 204.
 """
 import math
-from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
@@ -17,14 +16,8 @@ from scipy.spatial import ConvexHull
 from PIL import Image, ImageDraw
 
 from face import add_details
+from shapes import CANVAS, GROUND, SCALE, TOOLS, WHITE, big, dot, joint, oval_points, save, taper
 
-TOOLS = Path(__file__).resolve().parent
-SPRITES = TOOLS.parent / "sprites"
-
-SCALE = 4                # drawing happens this many times bigger, then shrinks
-CANVAS = (309, 215)
-GROUND = 204             # feet line, same as sleep and wake
-WHITE = (255, 255, 255, 255)
 FAR = (228, 230, 237, 255)   # the far front leg, a little grey so it reads as behind
 EDGE = (205, 208, 218, 255)  # thin line that keeps the near leg apart from the body
 
@@ -86,6 +79,7 @@ SIT_DOWN = [0.0, 0.3, 0.6, 0.85] # share of the way from STANDING to SIT in each
 SIT_DOWN_PACE = dict(haunch=0.6, tail_root=0.6, head=1.6, chest=1.6, leg_top=1.6)
 HIND_W = (32, 24, 19)            # back leg width at the hip, the hock, and the foot, like the walk
 UPPER, LOWER = 35, 33            # the two parts of the back leg
+HAUNCH_POINTS = 64               # points around the haunch outline
 HIND_PAW_X = 104                 # the back paw stays here while the cat sits down or gets up
 NECK_IN = 0.9                    # the neck meets the head a little inside its edge
 SMOOTH = 7                       # px; dips in the outline narrower than this get filled
@@ -95,16 +89,6 @@ FOOT = (12, 8)                   # half width and half height of the back foot
 # what a pose gets when it does not say: all paws on the floor, and the usual tail width
 DEFAULTS = dict(paw=(0, GROUND - PAW_R), far_paw=(0, GROUND - PAW_R), hind_paw=(HIND_PAW_X, GROUND - FOOT[1]),
                 tail_w=TAIL_W, soft_back=False)
-
-
-def big(xy):
-    return (xy[0] * SCALE, xy[1] * SCALE)
-
-
-def dot(draw, xy, r, color):
-    x, y = big(xy)
-    r *= SCALE
-    draw.ellipse([x - r, y - r, x + r, y + r], fill=color)
 
 
 def cut_head():
@@ -183,30 +167,6 @@ def draw_leg(draw, top, paw, color, edge=None):
     dot(draw, paw, PAW_R, color)
 
 
-def taper(draw, a, b, width_a, width_b):
-    """A rounded piece that is width_a wide at a and width_b wide at b."""
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    length = math.hypot(dx, dy) or 1
-    nx, ny = -dy / length, dx / length
-    ra, rb = width_a / 2, width_b / 2
-    corners = [(a[0] + nx * ra, a[1] + ny * ra), (b[0] + nx * rb, b[1] + ny * rb),
-               (b[0] - nx * rb, b[1] - ny * rb), (a[0] - nx * ra, a[1] - ny * ra)]
-    draw.polygon([big(c) for c in corners], fill=WHITE)
-    dot(draw, a, ra, WHITE)
-    dot(draw, b, rb, WHITE)
-
-
-def joint(hip, paw):
-    """The hock between hip and paw, on the side away from the head, like the walk."""
-    dx, dy = paw[0] - hip[0], paw[1] - hip[1]
-    reach = min(math.hypot(dx, dy), UPPER + LOWER - 0.01)
-    toward = math.atan2(dy, dx)
-    bend = math.acos((UPPER ** 2 + reach ** 2 - LOWER ** 2) / (2 * UPPER * reach))
-    a = (hip[0] + UPPER * math.cos(toward + bend), hip[1] + UPPER * math.sin(toward + bend))
-    b = (hip[0] + UPPER * math.cos(toward - bend), hip[1] + UPPER * math.sin(toward - bend))
-    return a if a[0] < b[0] else b
-
-
 def haunch_reach(haunch):
     """How far the haunch oval reaches out sideways and up and down from its middle."""
     _, _, length, width, tilt = haunch
@@ -220,15 +180,9 @@ def haunch_middle(haunch):
 
 
 def draw_haunch(draw, haunch):
-    x, y = haunch_middle(haunch)
     length, width, tilt = haunch[2:]
-    a = math.radians(tilt)
-    points = []
-    for k in range(64):
-        t = 2 * math.pi * k / 64
-        u, v = length * math.cos(t), width * math.sin(t)
-        points.append(big((x + u * math.cos(a) + v * math.sin(a), y - u * math.sin(a) + v * math.cos(a))))
-    draw.polygon(points, fill=WHITE)
+    points = oval_points(haunch_middle(haunch), length, width, tilt, HAUNCH_POINTS)
+    draw.polygon([big(point) for point in points], fill=WHITE)
 
 
 def draw_hind_leg(draw, haunch, paw):
@@ -236,7 +190,7 @@ def draw_hind_leg(draw, haunch, paw):
     and the haunch comes down, the leg folds, the hock pushing out behind, until
     the haunch sits on it and covers it."""
     hip = haunch_middle(haunch)
-    hock = joint(hip, paw)
+    hock = joint(hip, paw, UPPER, LOWER)
     taper(draw, hip, hock, HIND_W[0], HIND_W[1])
     taper(draw, hock, paw, HIND_W[1], HIND_W[2])
     x, y = big((paw[0] + FOOT[0] * 0.4, paw[1]))
@@ -261,17 +215,6 @@ def draw_back(draw, pose):
     haunch = oval_points(haunch_middle(pose["haunch"]), length, width, tilt)
     points = haunch + chest
     draw.polygon([big(points[i]) for i in ConvexHull(points).vertices], fill=WHITE)
-
-
-def oval_points(middle, rx, ry, turn=0):
-    """Points around an oval with these half widths, tipped by turn degrees like the head."""
-    a = math.radians(turn)
-    points = []
-    for k in range(48):
-        t = 2 * math.pi * k / 48
-        u, v = rx * math.cos(t), ry * math.sin(t)
-        points.append((middle[0] + u * math.cos(a) + v * math.sin(a), middle[1] - u * math.sin(a) + v * math.cos(a)))
-    return points
 
 
 def draw_neck(draw, pose):
@@ -364,16 +307,6 @@ def draw_frame(head, pose, sway=0):
     draw_leg(ImageDraw.Draw(im), (leg_x, leg_y), (leg_x + near[0], near[1]), WHITE, EDGE)
     im.alpha_composite(solid(head), head_at)   # the head stays in front of the leg
     return im.resize(CANVAS, Image.LANCZOS)
-
-
-def save(name, frames):
-    folder = SPRITES / name
-    folder.mkdir(exist_ok=True)
-    for old in folder.glob("*.png"):
-        old.unlink()
-    for i, im in enumerate(frames):
-        im.save(folder / f"{i:02d}.png")
-
 
 
 if __name__ == "__main__":
