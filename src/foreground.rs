@@ -6,6 +6,9 @@ use std::os::fd::RawFd;
 /// Programs found by name that are coding agents. The cat perks up when they wait for you.
 const CODING_AGENTS: [&str; 2] = ["claude", "codex"];
 
+/// Some programs, such as Claude Code from npm, run a file whose name ends in this.
+const EXE_ENDING: &str = ".exe";
+
 /// The longest process name the system keeps, plus room for the end of the string.
 const NAME_BUFFER_SIZE: usize = 256;
 
@@ -54,18 +57,82 @@ impl Foreground {
         {
             return front;
         }
-        let front = front_for(process_name(group).as_deref());
+        let names = [first_argument(group), process_name(group)];
+        let front = front_for(&names);
         self.last = Some((group, front));
         front
     }
 }
 
-/// What a running program is, from its name. A program with no name found is just a program.
-fn front_for(name: Option<&str>) -> Front {
-    match name {
-        Some(name) if CODING_AGENTS.contains(&name) => Front::Agent,
-        _ => Front::Program,
+/// What a running program is, from its names. Both the name it was started with and the
+/// name of its file are checked, because they can differ: Claude Code from npm is started
+/// as `claude` but its file is `claude.exe`, and the native one's file is its version.
+fn front_for(names: &[Option<String>]) -> Front {
+    let is_agent = names.iter().flatten().any(|name| {
+        // A path such as `/usr/local/bin/claude` counts by its last part.
+        let name = name.rsplit('/').next().unwrap_or(name);
+        let name = name.strip_suffix(EXE_ENDING).unwrap_or(name);
+        CODING_AGENTS.contains(&name)
+    });
+    if is_agent {
+        Front::Agent
+    } else {
+        Front::Program
     }
+}
+
+/// The name process `pid` was started with, its first argument, such as `claude`.
+#[cfg(target_os = "macos")]
+fn first_argument(pid: i32) -> Option<String> {
+    let mut query = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let query_length = u32::try_from(query.len()).ok()?;
+    let mut size: libc::size_t = 0;
+    // SAFETY: with no buffer given, sysctl only writes into `size` how big the answer is.
+    let failed = unsafe {
+        libc::sysctl(
+            query.as_mut_ptr(),
+            query_length,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if failed != 0 || size == 0 {
+        return None;
+    }
+    let mut buffer = vec![0u8; size];
+    // SAFETY: sysctl writes at most `size` bytes into `buffer`, which is that long, and sets
+    // `size` to how many it wrote.
+    let failed = unsafe {
+        libc::sysctl(
+            query.as_mut_ptr(),
+            query_length,
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if failed != 0 {
+        return None;
+    }
+    // The answer holds the number of arguments, the program's path, some empty bytes,
+    // then each argument. Each part ends with an empty byte.
+    let after_count = buffer.get(std::mem::size_of::<i32>()..size)?;
+    let path_end = after_count.iter().position(|byte| *byte == 0)?;
+    let after_path = after_count.get(path_end..)?;
+    let start = after_path.iter().position(|byte| *byte != 0)?;
+    let first = after_path.get(start..)?.split(|byte| *byte == 0).next()?;
+    Some(String::from_utf8_lossy(first).into_owned())
+}
+
+/// The name process `pid` was started with, its first argument, such as `claude`.
+#[cfg(not(target_os = "macos"))]
+fn first_argument(pid: i32) -> Option<String> {
+    let arguments = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let first = arguments.split(|byte| *byte == 0).next()?;
+    (!first.is_empty()).then(|| String::from_utf8_lossy(first).into_owned())
 }
 
 /// The short name of process `pid`, such as `vim`.
@@ -141,12 +208,59 @@ mod tests {
         Ok(())
     }
 
+    fn names(first: Option<&str>, file: Option<&str>) -> [Option<String>; 2] {
+        [first.map(String::from), file.map(String::from)]
+    }
+
     #[test]
-    fn coding_agents_are_found_by_name() {
-        assert_eq!(front_for(Some("claude")), Front::Agent);
-        assert_eq!(front_for(Some("codex")), Front::Agent);
-        assert_eq!(front_for(Some("vim")), Front::Program);
-        assert_eq!(front_for(None), Front::Program);
+    fn coding_agents_are_found_by_either_name() {
+        for (first, file) in [
+            (Some("claude"), Some("claude.exe")),
+            (Some("claude"), Some("2.0.14")),
+            (Some("/usr/local/bin/codex"), None),
+            (None, Some("claude")),
+        ] {
+            assert_eq!(
+                front_for(&names(first, file)),
+                Front::Agent,
+                "{first:?} {file:?}"
+            );
+        }
+        for (first, file) in [
+            (Some("vim"), Some("vim")),
+            (Some("claudette"), None),
+            (None, None),
+        ] {
+            assert_eq!(
+                front_for(&names(first, file)),
+                Front::Program,
+                "{first:?} {file:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_program_started_as_claude_is_an_agent() -> Result<()> {
+        // A link named `claude` starts `sleep` with the name `claude`, as npm's link does.
+        let folder = std::env::temp_dir().join(format!("stray-agent-{}", std::process::id()));
+        std::fs::create_dir_all(&folder)?;
+        let agent = folder.join("claude");
+        std::os::unix::fs::symlink("/bin/sleep", &agent)?;
+        let front = front_while_running(&agent);
+        std::fs::remove_dir_all(&folder)?;
+        assert_eq!(front?, Front::Agent);
+        Ok(())
+    }
+
+    #[test]
+    fn the_first_argument_is_found() -> Result<()> {
+        let mut child = Command::new("/bin/sleep").arg("5").spawn()?;
+        let pid = i32::try_from(child.id())?;
+        let first = first_argument(pid).context("the first argument should be found");
+        child.kill()?;
+        child.wait()?;
+        assert_eq!(first?, "/bin/sleep");
+        Ok(())
     }
 
     #[test]

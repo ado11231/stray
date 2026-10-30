@@ -187,7 +187,7 @@ sequenceDiagram
 | Signal | How Stray Gets It | What It Tells The Cat |
 | --- | --- | --- |
 | **Prompt mark** | After a command runs, Stray's own shell prints `ESC ] 7701 ; status BEL` before the prompt. Stray reads it and leaves it in the output. Terminals ignore OSC numbers they do not know. | You are back at the prompt, and whether to flinch. |
-| **Foreground program** | Stray asks the PTY which process group is in front (`tcgetpgrp`). When it changes, Stray looks up its name: `proc_name` on macOS, `/proc/<pid>/comm` on Linux. | The shell is waiting, or a program is running, and which one. |
+| **Foreground program** | Stray asks the PTY which process group is in front (`tcgetpgrp`). When it changes, Stray looks up two names: the one the program was started with, and the name of its file. Both are needed: Claude Code from npm is started as `claude`, but its file is `claude.exe`. | The shell is waiting, or a program is running, and which one. |
 | **Keys** | Stray sees every key. | You are typing, so look up, or how long you have been idle. |
 | **Output** | Stray sees all output. | Something is printing, or the screen is quiet. |
 | **Full screen flag** | The screen model has it. | A program such as `vim` has the screen. |
