@@ -44,8 +44,8 @@ EYES = [(233, 115, 243, 132), (256, 116, 266, 133)]   # eye boxes in run_body.pn
 SIT = dict(head=(178, 14), haunch=(157, 204, 55, 43, 90), chest=(160, 78, 236, 200),
            leg_top=(212, 140), tail_root=(124, 194), tail_len=95, tail_start=180, tail_bend=200, head_turn=0)
 # lying down with the head up, close to the last wake frame
-LOW = dict(head=(196, 100), haunch=(131, 204, 65, 40, 0), chest=(140, 136, 256, 204),
-           leg_top=(232, 186), tail_root=(74, 196), tail_len=30, tail_start=180, tail_bend=20, head_turn=0)
+LOW = dict(head=(196, 110), haunch=(131, 204, 66, 37, 0), chest=(140, 142, 256, 204),
+           leg_top=(232, 190), tail_root=(110, 198), tail_len=12, tail_start=180, tail_bend=20, head_turn=0)
 # standing on four legs, close to the walk
 STANDING = dict(head=(193, 42), haunch=(102, 170, 62, 38, 0), chest=(104, 86, 252, 158),
                 leg_top=(212, 148), tail_root=(58, 108), tail_len=60, tail_start=105, tail_bend=100, head_turn=0)
@@ -72,7 +72,10 @@ BOWL_RIM = 7                     # half height of the rim oval
 BOWL = (150, 160, 185, 255)      # a soft grey blue, so it stands apart from the white cat
 FOOD = (96, 104, 128, 255)
 BLINK_AT = (10, 11)              # frames with the eyes shut
-STAND = [0.0, 0.3, 0.6, 0.85]    # share of the way from LOW to SIT in each stand frame
+STAND = [0.06, 0.2, 0.36, 0.54, 0.72, 0.88]   # share of the way from LOW to SIT in each stand frame
+# getting up, the head and front legs push up first, then the back end rolls up and the tail curls round
+STAND_PACE = dict(head=0.55, leg_top=0.55, chest=0.7, haunch=1.4,
+                  tail_root=1.5, tail_len=1.5, tail_start=1.5, tail_bend=1.5)
 SIT_DOWN = [0.0, 0.3, 0.6, 0.85] # share of the way from STANDING to SIT in each sit down frame
 # sitting down, the back end drops first and the front rises after
 SIT_DOWN_PACE = dict(haunch=0.6, tail_root=0.6, head=1.6, chest=1.6, leg_top=1.6)
@@ -358,7 +361,7 @@ if __name__ == "__main__":
         sway = TAIL_SWAY * math.sin(2 * math.pi * k / FRAMES)
         frames.append(draw_frame(blink if k in BLINK_AT else head, SIT, sway))
     save("sit", frames)
-    save("stand", [draw_frame(head, blend(LOW, SIT, share)) for share in STAND])
+    save("stand", [draw_frame(head, blend(LOW, SIT, share, STAND_PACE)) for share in STAND])
     save("sit_down", [draw_frame(head, blend(STANDING, SIT, share, SIT_DOWN_PACE)) for share in SIT_DOWN])
     save("lean", [draw_frame(head, blend(SIT, EAT, share)) for share in LEAN])
     eat = []
