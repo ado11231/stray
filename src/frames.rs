@@ -11,6 +11,7 @@ pub use color::Palette;
 use anyhow::{Context, Result};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// Every sprite folder and its frames, in order. `build.rs` writes this table.
 const SPRITES: &[(&str, &[&[u8]])] = include!(concat!(env!("OUT_DIR"), "/sprites.rs"));
@@ -109,6 +110,25 @@ impl Pose {
         !matches!(self, Pose::Bowl | Pose::Ball | Pose::Tower)
     }
 
+    /// How long each frame stays on screen, matched to the kitty test player.
+    pub fn frame_time(self) -> Duration {
+        let millis = match self {
+            Pose::Sleep => 133,
+            Pose::Wake | Pose::LookUp | Pose::Flinch | Pose::PerkUp | Pose::PettedIn => 70,
+            Pose::Stand | Pose::SitDown | Pose::Crouch | Pose::Pounce | Pose::Bat | Pose::Purr => {
+                90
+            }
+            Pose::Sit | Pose::Eat => 120,
+            Pose::Walk | Pose::Lean => 110,
+            Pose::Run => 60,
+            Pose::Turn | Pose::Wiggle => 80,
+            Pose::Ball => 50,
+            // These never change frame, so the time is only how often they are checked.
+            Pose::Bowl | Pose::Tower => 1000,
+        };
+        Duration::from_millis(millis)
+    }
+
     /// The pose's frames as built into the program.
     fn sprites(self) -> &'static [&'static [u8]] {
         SPRITES
@@ -128,6 +148,17 @@ impl Pose {
 pub enum Facing {
     Right,
     Left,
+}
+
+/// One frame of a pose at a spot in the bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sprite {
+    pub pose: Pose,
+    /// Which frame of the pose. It wraps around, so a pose can loop.
+    pub index: usize,
+    pub facing: Facing,
+    /// How far from the left edge of the bar, in sprite pixels.
+    pub x: u32,
 }
 
 /// Frames ready to send, made the first time each one is asked for.

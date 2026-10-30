@@ -349,7 +349,7 @@ mod tests {
         signal_hook::low_level::raise(SIGWINCH)?;
         let mut guard = start_resize_thread(signals, sender)?;
 
-        forward_session_events(receiver, io::sink(), |_| Ok(()))?;
+        forward_session_events(receiver, io::sink(), |_| Ok(()), |_, _| Ok(None))?;
         guard.stop()?;
 
         assert!(guard.thread.is_none());

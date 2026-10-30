@@ -5,7 +5,7 @@
 
 use super::BAR_ROWS;
 use crate::escape;
-use crate::frames::{CANVAS_HEIGHT, Facing, Frames, Pose};
+use crate::frames::{CANVAS_HEIGHT, Facing, Frames, Pose, Sprite};
 use crate::image::{self, IdRange, Placement};
 use std::io::{self, Write};
 
@@ -16,8 +16,8 @@ const DEFAULT_CELL_HEIGHT_PER_WIDTH: u32 = 2;
 /// IDs each thing uses, so the new picture can go up before the old one comes down.
 const IDS_PER_THING: u32 = 2;
 
-/// Something shown in the bar.
-struct Thing {
+/// Something that stays in one spot in the bar.
+struct Prop {
     pose: Pose,
     /// How far from the left edge, in sprite pixels. Frames are `CANVAS_HEIGHT` pixels tall.
     x: u32,
@@ -25,25 +25,28 @@ struct Thing {
     layer: u32,
 }
 
-/// The things in the bar, left to right, with the same spots as the kitty test player.
-const THINGS: [Thing; 3] = [
-    Thing {
+/// The things that stay put, left to right, with the same spots as the kitty test player.
+const PROPS: [Prop; 2] = [
+    Prop {
         pose: Pose::Tower,
         x: 0,
         layer: 0,
     },
-    Thing {
+    Prop {
         pose: Pose::Bowl,
         x: 166,
         layer: 2,
     },
-    // The cat sits at its home spot, just past the bowl.
-    Thing {
-        pose: Pose::Sit,
-        x: 222,
-        layer: 1,
-    },
 ];
+
+/// The cat is in front of the cat tree and behind the bowl.
+const CAT_LAYER: u32 = 1;
+
+/// The cat comes after the props, so its IDs follow theirs.
+const CAT: usize = PROPS.len();
+
+/// How many things are in the bar: the props and the cat.
+const THINGS: usize = PROPS.len() + 1;
 
 /// The size of one character cell in pixels, when the terminal reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +84,9 @@ pub struct Scene {
     frames: Frames,
     ids: IdRange,
     /// The ID showing each thing, if it is on screen.
-    shown: [Option<u32>; THINGS.len()],
+    shown: [Option<u32>; THINGS],
+    /// The cat's frame on screen now, if it is shown.
+    cat: Option<Sprite>,
 }
 
 impl Scene {
@@ -89,8 +94,14 @@ impl Scene {
         Self {
             frames,
             ids: IdRange::pick(),
-            shown: [None; THINGS.len()],
+            shown: [None; THINGS],
+            cat: None,
         }
+    }
+
+    /// The cat's frame on screen now, if it is shown.
+    pub fn cat(&self) -> Option<Sprite> {
+        self.cat
     }
 
     /// Shows every thing in the bar, whose top row is `bar_row` (counted from 1).
@@ -100,28 +111,63 @@ impl Scene {
         writer: &mut impl Write,
         bar_row: u16,
         cell: Option<CellSize>,
+        cat: Sprite,
     ) -> io::Result<()> {
-        for (index, thing) in THINGS.iter().enumerate() {
-            let slot = index as u32 * IDS_PER_THING;
-            // Take the other ID of the pair from the one on screen now.
-            let id = match self.shown[index] {
-                Some(old) if old == self.ids.id(slot) => self.ids.id(slot + 1),
-                _ => self.ids.id(slot),
+        for (thing, prop) in PROPS.iter().enumerate() {
+            let sprite = Sprite {
+                pose: prop.pose,
+                index: 0,
+                facing: Facing::Right,
+                x: prop.x,
             };
-            let column = CellSize::column(cell, thing.x);
-            writer.write_all(escape::move_cursor(bar_row, column + 1).as_bytes())?;
-            let png = self
-                .frames
-                .get(thing.pose, 0, Facing::Right)
-                .map_err(io::Error::other)?;
-            let placement = Placement {
-                rows: BAR_ROWS,
-                layer: thing.layer,
-            };
-            image::show(writer, id, png, placement, false)?;
-            if let Some(old) = self.shown[index].replace(id) {
-                image::remove(writer, old, false)?;
-            }
+            self.show(writer, thing, bar_row, cell, sprite, prop.layer)?;
+        }
+        self.draw_cat(writer, bar_row, cell, cat)
+    }
+
+    /// Shows the cat with a new frame or at a new spot, and leaves the props alone.
+    /// The cursor is left moved; the caller puts it back.
+    pub fn draw_cat(
+        &mut self,
+        writer: &mut impl Write,
+        bar_row: u16,
+        cell: Option<CellSize>,
+        cat: Sprite,
+    ) -> io::Result<()> {
+        self.show(writer, CAT, bar_row, cell, cat, CAT_LAYER)?;
+        self.cat = Some(cat);
+        Ok(())
+    }
+
+    /// Shows one thing, then removes the picture that showed it before.
+    fn show(
+        &mut self,
+        writer: &mut impl Write,
+        thing: usize,
+        bar_row: u16,
+        cell: Option<CellSize>,
+        sprite: Sprite,
+        layer: u32,
+    ) -> io::Result<()> {
+        let slot = thing as u32 * IDS_PER_THING;
+        // Take the other ID of the pair from the one on screen now.
+        let id = match self.shown[thing] {
+            Some(old) if old == self.ids.id(slot) => self.ids.id(slot + 1),
+            _ => self.ids.id(slot),
+        };
+        let column = CellSize::column(cell, sprite.x);
+        writer.write_all(escape::move_cursor(bar_row, column + 1).as_bytes())?;
+        let png = self
+            .frames
+            .get(sprite.pose, sprite.index, sprite.facing)
+            .map_err(io::Error::other)?;
+        let placement = Placement {
+            rows: BAR_ROWS,
+            layer,
+        };
+        image::show(writer, id, png, placement, false)?;
+        if let Some(old) = self.shown[thing].replace(id) {
+            image::remove(writer, old, false)?;
         }
         Ok(())
     }
@@ -133,6 +179,7 @@ impl Scene {
                 image::remove(writer, id, false)?;
             }
         }
+        self.cat = None;
         Ok(())
     }
 }
@@ -140,7 +187,15 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cat::HOME_X;
     use anyhow::{Context, Result};
+
+    const SITTING: Sprite = Sprite {
+        pose: Pose::Sit,
+        index: 0,
+        facing: Facing::Right,
+        x: HOME_X,
+    };
 
     #[test]
     fn sprite_pixels_turn_into_columns() {
@@ -151,8 +206,8 @@ mod tests {
             height: 20,
         });
         assert_eq!(CellSize::column(cell, 0), 0);
-        assert_eq!(CellSize::column(cell, 222), 4);
-        assert_eq!(CellSize::column(None, 222), 4);
+        assert_eq!(CellSize::column(cell, HOME_X), 4);
+        assert_eq!(CellSize::column(None, HOME_X), 4);
     }
 
     #[test]
@@ -172,7 +227,7 @@ mod tests {
     fn a_new_frame_goes_up_before_the_old_one_comes_down() -> Result<()> {
         let mut scene = Scene::new(Frames::new(None));
         let mut first = Vec::new();
-        scene.draw(&mut first, 23, None)?;
+        scene.draw(&mut first, 23, None, SITTING)?;
         let ids = scene.shown;
         assert!(
             !contains(&first, b"a=d"),
@@ -180,7 +235,7 @@ mod tests {
         );
 
         let mut second = Vec::new();
-        scene.draw(&mut second, 23, None)?;
+        scene.draw(&mut second, 23, None, SITTING)?;
         for (old, new) in ids.iter().zip(scene.shown) {
             let (Some(old), Some(new)) = (old, new) else {
                 anyhow::bail!("every thing should be shown");
@@ -195,9 +250,33 @@ mod tests {
         let mut cleared = Vec::new();
         scene.clear(&mut cleared)?;
         assert!(scene.shown.iter().all(Option::is_none));
+        assert_eq!(scene.cat(), None);
         assert_eq!(
             cleared.windows(3).filter(|bytes| *bytes == b"a=d").count(),
-            THINGS.len()
+            THINGS
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_new_cat_frame_leaves_the_props_alone() -> Result<()> {
+        let mut scene = Scene::new(Frames::new(None));
+        scene.draw(&mut Vec::new(), 23, None, SITTING)?;
+        let props = scene.shown;
+        let next = Sprite {
+            index: 1,
+            ..SITTING
+        };
+
+        let mut written = Vec::new();
+        scene.draw_cat(&mut written, 23, None, next)?;
+
+        assert_eq!(scene.shown[..CAT], props[..CAT]);
+        assert_ne!(scene.shown[CAT], props[CAT]);
+        assert_eq!(scene.cat(), Some(next));
+        assert_eq!(
+            written.windows(3).filter(|bytes| *bytes == b"a=T").count(),
+            1
         );
         Ok(())
     }
