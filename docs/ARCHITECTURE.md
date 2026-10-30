@@ -290,7 +290,7 @@ stateDiagram-v2
 
 * Nothing is saved. Every window reads the same clock, so every cat keeps the same day.
 * A meal lasts a few minutes from the moment it starts, or from when the window opens during it.
-* Two test settings change the clock, so a whole day can be checked in a few minutes. `STRAY_CLOCK=06:55` starts the clock at that time when the window opens. `STRAY_CLOCK_SPEED=60` runs it 60 times faster.
+* Two test settings change the clock, so a whole day can be checked in a few minutes. `STRAY_CLOCK=06:55` starts the clock at that time when the window opens. `STRAY_CLOCK_SPEED=60` runs it 60 times faster, and makes the meal and the wait before a nap on a long run 60 times shorter.
 * Local time with the right time zone comes from the `jiff` crate.
 
 ## How Commands Reach The Cat

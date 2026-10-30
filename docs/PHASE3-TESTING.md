@@ -23,14 +23,15 @@ Use `bash` in place of `zsh` to check bash. Type `exit` to leave Stray.
 
 Two test settings change the cat's clock. `STRAY_CLOCK` sets the time when the
 window opens, and `STRAY_CLOCK_SPEED` makes it run faster. At speed 60, one
-minute on the clock passes each second.
+minute on the clock passes each second. The speed also shortens the meal and the
+wait before a nap on a long run, so at speed 60 a meal lasts 3 seconds.
 
 ```sh
 STRAY_CLOCK=06:59 STRAY_CLOCK_SPEED=60 ./target/release/stray start --login
 ```
 
 After a second it is breakfast. The cat gets up, walks to the bowl, turns to
-face it, leans in, and eats for 3 minutes. Then it sits by the bowl.
+face it, leans in, and eats for a few seconds. Then it sits by the bowl.
 
 ```sh
 STRAY_CLOCK=12:59 STRAY_CLOCK_SPEED=60 ./target/release/stray start --login
@@ -43,8 +44,9 @@ About 2 minutes later the nap ends, and it wakes and sits.
 STRAY_CLOCK=17:59 STRAY_CLOCK_SPEED=60 ./target/release/stray start --login
 ```
 
-The cat eats dinner, sits by the bowl, then at 23:00 walks home, turns, and
-sleeps for the night. Open a second window with the same settings during the
+The cat eats dinner, sits by the bowl, then at 23:00, about 5 minutes in, walks
+home, turns, and sleeps for the night. Use `STRAY_CLOCK_SPEED=600` to reach the
+night in about 30 seconds. Open a second window with the same settings during the
 night: its cat should already be asleep.
 
 A bad setting, such as `STRAY_CLOCK=breakfast`, should stop Stray from starting
@@ -69,7 +71,8 @@ edge of the window. Make the window wide and narrow and watch it again.
 * Open `vim` or `less`: the cat sits still. Typing in them does not make it look up.
 * Run `sleep 30`: the cat sits and watches, and starts no actions.
 * Run `sleep 150`: after 2 minutes the cat naps where it sits. It wakes when the
-  prompt comes back.
+  prompt comes back. With `STRAY_CLOCK_SPEED=60`, `sleep 10` is enough: the nap
+  comes after 2 seconds.
 * Start `claude`, ask it something, and wait: when it finishes and waits for you,
   the cat perks up once.
 * During a nap or the night, type and run `false`: the cat sleeps on.

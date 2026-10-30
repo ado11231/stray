@@ -146,6 +146,11 @@ impl Clock {
         }
     }
 
+    /// How many times faster than real time the clock runs: 1 for the local time.
+    pub fn speed(&self) -> u32 {
+        self.test.as_ref().map_or(1, |test| test.speed)
+    }
+
     /// The time on the clock at `now`.
     pub fn time(&self, now: Instant) -> Time {
         let Some(test) = &self.test else {
@@ -261,6 +266,7 @@ mod tests {
     fn without_settings_the_clock_is_local() -> Result<()> {
         let clock = Clock::from_settings(None, None, Instant::now())?;
         assert!(clock.test.is_none());
+        assert_eq!(clock.speed(), 1);
         Ok(())
     }
 }

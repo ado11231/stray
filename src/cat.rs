@@ -22,7 +22,7 @@ pub const HOME_X: u32 = 222;
 /// Where the cat sits facing the bowl to eat, in sprite pixels.
 const EAT_SPOT: i32 = 263;
 
-/// How long the cat eats at each meal.
+/// How long the cat eats at each meal. A fast test clock makes it shorter.
 const MEAL_LENGTH: Duration = Duration::from_secs(3 * 60);
 
 /// How long the cat keeps looking up after the last key.
@@ -44,7 +44,8 @@ const AGENT_WORK: Duration = Duration::from_secs(1);
 /// The exit status of a command stopped with Ctrl C. The cat does not flinch at it.
 const CTRL_C_STATUS: i32 = 130;
 
-/// After a program has run this long, the cat naps until you are back at the prompt.
+/// After a program has run this long, the cat naps until you are back at the prompt. A fast
+/// test clock makes it shorter.
 const LONG_RUN: Duration = Duration::from_secs(2 * 60);
 
 /// How long the cat sits still in free time before it picks a resting action, in seconds.
@@ -302,7 +303,8 @@ impl Cat {
             Mode::Free | Mode::Watching => plan.sit(),
             Mode::Eating => {
                 self.fed = Some(part);
-                plan.go_to(EAT_SPOT, Facing::Left).eat(MEAL_LENGTH)
+                plan.go_to(EAT_SPOT, Facing::Left)
+                    .eat(self.on_the_clock(MEAL_LENGTH))
             }
             Mode::Sleeping => plan.go_to(home_x(), Facing::Right).sleep(),
         };
@@ -313,13 +315,19 @@ impl Cat {
 
     /// While a program other than a coding agent has run a long time, naps where it sits.
     fn nap_after_a_long_run(&mut self, now: Instant) {
-        let long_run = self
-            .program_started
-            .is_some_and(|started| now.saturating_duration_since(started) >= LONG_RUN);
+        let long_run = self.program_started.is_some_and(|started| {
+            now.saturating_duration_since(started) >= self.on_the_clock(LONG_RUN)
+        });
         let step = *self.step();
         if self.front == Front::Program && long_run && step.pose == Pose::Sit {
             self.follow(Plan::from(step.x, step.facing).sleep(), now);
         }
+    }
+
+    /// A length of the cat's day in real time. A test clock that runs faster makes it
+    /// shorter by the same amount, so a meal or a long run can be checked quickly.
+    fn on_the_clock(&self, length: Duration) -> Duration {
+        length / self.clock.speed()
     }
 
     /// When a coding agent has worked and then gone quiet, it is waiting for you, so the cat
@@ -512,11 +520,13 @@ mod tests {
         cat.tick(start);
         assert_eq!(cat.mode(), Mode::Eating);
 
-        let now = run(&mut cat, start, start + Duration::from_secs(10));
+        // The test clock runs 60 times faster, so the meal lasts 3 seconds.
+        let meal = MEAL_LENGTH / SPEED;
+        let now = run(&mut cat, start, start + meal);
         let sprite = cat.sprite(now);
         assert_eq!((sprite.pose, sprite.facing), (Pose::Eat, Facing::Left));
 
-        let now = run(&mut cat, now, now + MEAL_LENGTH);
+        let now = run(&mut cat, now, now + meal);
         let sprite = cat.sprite(now);
         assert_eq!(cat.mode(), Mode::Free);
         assert_eq!(sprite.pose, Pose::Sit);
@@ -531,10 +541,10 @@ mod tests {
         let now = run(
             &mut cat,
             start,
-            start + MEAL_LENGTH + Duration::from_secs(10),
+            start + MEAL_LENGTH / SPEED + Duration::from_secs(10),
         );
         assert_eq!(cat.mode(), Mode::Free);
-        // Still breakfast on the clock: about 3 hours at 60 times speed is not reached.
+        // Still breakfast on the clock: 7:00 plus under an hour at 60 times speed.
         run(&mut cat, now, now + Duration::from_secs(30));
         assert_eq!(cat.mode(), Mode::Free);
     }
@@ -850,5 +860,14 @@ mod tests {
         cat.output_seen(start);
         let (poses, _) = watch(&mut cat, start, AGENT_QUIET * 3);
         assert!(!poses.contains(&Pose::PerkUp));
+    }
+
+    #[test]
+    fn a_fast_test_clock_shortens_a_long_run() {
+        let start = Instant::now();
+        let mut cat = Cat::new(start, Clock::starting_at(time(10, 0, 0, 0), SPEED, start));
+        cat.set_front(Front::Program, start);
+        let (poses, _) = watch(&mut cat, start, LONG_RUN / SPEED + Duration::from_secs(3));
+        assert_eq!(poses.last(), Some(&Pose::Sleep));
     }
 }

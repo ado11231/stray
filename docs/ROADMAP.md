@@ -190,7 +190,8 @@ flowchart LR
 * New tests cover the schedule and the test clock, the steps and plans, every mode,
   the resting actions, looking up, flinching, perking up, and napping on long runs.
 * PTY tests run real bash 3.2 and zsh to check the prompt mark, and a job control
-  shell to check the foreground program, including a program named `claude`.
+  shell to check the foreground program. Coding agents are checked by name only,
+  since macOS will not run a copy of a system program under another name.
 * The user tried some steps in a real terminal as they were built, and reported
   that they worked: the cat moves on its own, looks up while typing, flinches at a
   failed command, and perks up when Claude Code waits. The terminal was not
